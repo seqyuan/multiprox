@@ -2,7 +2,7 @@ import * as crypto from "crypto";
 import { IncomingMessage } from "http";
 import { TLSSocket } from "tls";
 
-const SESSION_COOKIE_NAME = "multiprox_session";
+export const SESSION_COOKIE_NAME = "multiprox_session";
 
 export interface SessionResult {
   valid: boolean;

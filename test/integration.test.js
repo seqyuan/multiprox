@@ -297,6 +297,133 @@ test("proxy forwarded headers for subpath apps", () => {
   assert.equal(legacy.prefix, "/proxy/jupyter");
 });
 
+test("proxy rewrites redirects, strips gateway cookie, and falls back by referer", async (t) => {
+  const tmp = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "multiprox-proxy-"));
+  const testHome = path.join(tmp, "home");
+  const userHome = path.join(testHome, TEST_USER);
+  const configPath = path.join(userHome, ".config", "multiprox", "config.yaml");
+  const statePath = path.join(tmp, "state.yaml");
+  const gatewayPort = 30443;
+  let lastCookie = "";
+
+  const backend = http.createServer((req, res) => {
+    lastCookie = req.headers.cookie || "";
+    if (req.url === "/") {
+      res.writeHead(302, { Location: "/login" });
+      res.end();
+      return;
+    }
+    if (req.url === "/external") {
+      res.writeHead(302, { Location: "//cdn.example.test/app.js" });
+      res.end();
+      return;
+    }
+    if (req.url === "/_next/static/app.js") {
+      res.writeHead(200, { "Content-Type": "application/javascript" });
+      res.end("asset-ok");
+      return;
+    }
+    if (req.url === "/api/auth/login") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ backend: true }));
+      return;
+    }
+    res.writeHead(404);
+    res.end("backend 404");
+  });
+  await new Promise((resolve) => backend.listen(0, "127.0.0.1", resolve));
+  t.after(() => backend.close());
+  const backendPort = backend.address().port;
+
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  const { hashPassword } = require(path.join(ROOT, "dist", "auth"));
+  const yaml = require("js-yaml");
+  fs.writeFileSync(
+    configPath,
+    yaml.dump({
+      auth: { password_hash: hashPassword("pass123") },
+      services: [{ id: "app", name: "App", host: "127.0.0.1", port: backendPort, path: "/app", websocket: true }],
+    })
+  );
+  fs.writeFileSync(
+    statePath,
+    yaml.dump({
+      server: { host: "127.0.0.1", port: gatewayPort },
+      auth: { session_secret: "proxy-test-secret", session_ttl: 3600 },
+      users: { home_prefix: testHome, scan_homes: true },
+    })
+  );
+
+  const daemon = runNode(["-s", statePath, "--host", "127.0.0.1", "--port", String(gatewayPort)]);
+  t.after(() => daemon.kill("SIGTERM"));
+  await waitForLog(daemon, /listening on http:\/\/127\.0\.0\.1:/);
+
+  const loginBody = `username=${TEST_USER}&password=pass123`;
+  const login = await httpRequest(
+    {
+      hostname: "127.0.0.1",
+      port: gatewayPort,
+      path: "/login",
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Content-Length": Buffer.byteLength(loginBody),
+      },
+    },
+    loginBody
+  );
+  assert.equal(login.status, 302, login.body);
+  const cookie = parseCookie(login.headers["set-cookie"]);
+
+  const proxied = await httpRequest({
+    hostname: "127.0.0.1",
+    port: gatewayPort,
+    path: `/proxy/${TEST_USER}/app/`,
+    method: "GET",
+    headers: { Cookie: `${cookie}; backend_cookie=yes` },
+  });
+  assert.equal(proxied.status, 302);
+  assert.equal(proxied.headers.location, `/proxy/${TEST_USER}/app/login`);
+  assert.equal(lastCookie.includes("multiprox_session="), false);
+  assert.equal(lastCookie.includes("backend_cookie=yes"), true);
+
+  const external = await httpRequest({
+    hostname: "127.0.0.1",
+    port: gatewayPort,
+    path: `/proxy/${TEST_USER}/app/external`,
+    method: "GET",
+    headers: { Cookie: cookie },
+  });
+  assert.equal(external.status, 302);
+  assert.equal(external.headers.location, "//cdn.example.test/app.js");
+
+  const asset = await httpRequest({
+    hostname: "127.0.0.1",
+    port: gatewayPort,
+    path: "/_next/static/app.js",
+    method: "GET",
+    headers: {
+      Cookie: cookie,
+      Referer: `http://127.0.0.1:${gatewayPort}/proxy/${TEST_USER}/app/login`,
+    },
+  });
+  assert.equal(asset.status, 200, asset.body);
+  assert.equal(asset.body, "asset-ok");
+
+  const backendApi = await httpRequest({
+    hostname: "127.0.0.1",
+    port: gatewayPort,
+    path: "/api/auth/login",
+    method: "POST",
+    headers: {
+      Cookie: cookie,
+      Referer: `http://127.0.0.1:${gatewayPort}/proxy/${TEST_USER}/app/login`,
+    },
+  });
+  assert.equal(backendApi.status, 200, backendApi.body);
+  assert.match(backendApi.body, /"backend":true/);
+});
+
 test("legacy proxy path routing", () => {
   const { UserRegistry } = require(path.join(ROOT, "dist", "registry"));
   const yaml = require("js-yaml");

@@ -431,7 +431,7 @@ ${writable ? '<button type="button" class="fab-add" id="fab-add" title="添加�
 <div class="modal-backdrop" id="add-modal">
   <form class="modal" id="add-form">
     <h2>添加端口转发</h2>
-    <label for="add-name">名称</label>
+    <label for="add-name">显示名称</label>
     <input id="add-name" name="name" type="text" required>
     <label for="add-description">说明</label>
     <input id="add-description" name="description" type="text">
@@ -456,7 +456,7 @@ ${writable ? '<button type="button" class="fab-add" id="fab-add" title="添加�
   <form class="modal" id="edit-form">
     <h2>编辑端口转发</h2>
     <input type="hidden" id="edit-id" value="">
-    <label for="edit-name">名称</label>
+    <label for="edit-name">显示名称</label>
     <input id="edit-name" name="name" type="text" required>
     <label for="edit-description">说明</label>
     <input id="edit-description" name="description" type="text">

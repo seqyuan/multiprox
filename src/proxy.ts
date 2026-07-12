@@ -3,7 +3,7 @@ import * as net from "net";
 import { IncomingMessage, ServerResponse } from "http";
 import { Socket } from "net";
 import { ServiceConfig } from "./user-config";
-import { isSecureRequest } from "./auth";
+import { SESSION_COOKIE_NAME, isSecureRequest } from "./auth";
 import { clientIp } from "./http-body";
 
 const HOP_BY_HOP_HEADERS = new Set([
@@ -36,6 +36,12 @@ export function proxyWebSocket(
       const k = key.toLowerCase();
       if (k === "host") {
         headers.push(`host: ${targetHost}:${targetPort}`);
+      } else if (k === "cookie") {
+        const values = Array.isArray(value) ? value : value !== undefined ? [value] : [];
+        for (const raw of values) {
+          const stripped = stripGatewayCookie(raw);
+          if (stripped) headers.push(`${key}: ${stripped}`);
+        }
       } else if (k !== "connection" && k !== "proxy-connection" && k !== "upgrade-insecure-requests") {
         if (Array.isArray(value)) {
           for (const v of value) headers.push(`${key}: ${v}`);
@@ -114,6 +120,14 @@ export function buildForwardedHeaderValues(
   };
 }
 
+function stripGatewayCookie(cookieHeader: string): string | undefined {
+  const kept = cookieHeader
+    .split(";")
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0 && !part.startsWith(`${SESSION_COOKIE_NAME}=`));
+  return kept.length > 0 ? kept.join("; ") : undefined;
+}
+
 function copyHeadersToOutgoing(
   source: IncomingMessage,
   target: http.OutgoingHttpHeaders
@@ -122,6 +136,17 @@ function copyHeadersToOutgoing(
     if (!value) continue;
     const lower = key.toLowerCase();
     if (HOP_BY_HOP_HEADERS.has(lower)) continue;
+
+    if (lower === "cookie") {
+      const cookie = Array.isArray(value)
+        ? value.map(stripGatewayCookie).filter((v): v is string => !!v)
+        : stripGatewayCookie(value);
+      if (Array.isArray(cookie) ? cookie.length > 0 : cookie) {
+        target[key] = cookie;
+      }
+      continue;
+    }
+
     target[key] = value;
   }
 }
@@ -174,7 +199,7 @@ export function proxyHttp(
       typeof resHeaders["location"] === "string"
     ) {
       const loc = resHeaders["location"] as string;
-      if (loc.startsWith("/") && !loc.startsWith("/proxy/")) {
+      if (loc.startsWith("/") && !loc.startsWith("//") && !loc.startsWith("/proxy/")) {
         resHeaders["location"] = forward.prefix + loc;
       }
     }

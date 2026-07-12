@@ -292,7 +292,12 @@ export async function handleApi(
   registry: UserRegistry,
   sessionSecret: string
 ): Promise<boolean> {
-  if (!pathname.startsWith("/api/")) {
+  const isKnownApi =
+    pathname === "/api/services" ||
+    pathname === "/api/services/layout" ||
+    /^\/api\/services\/[^/]+$/.test(pathname);
+
+  if (!isKnownApi) {
     return false;
   }
 

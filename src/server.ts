@@ -5,7 +5,7 @@ import { Socket } from "net";
 import { loadState, applyStateOverrides, persistServerConfig, getDefaultStatePath, StateConfig } from "./state";
 import { getPidPath } from "./paths";
 import { getRunningPid, setupDaemonShutdown, writePidFile, removePidFile } from "./daemon";
-import { UserRegistry, usernameFromProxyPath } from "./registry";
+import { ServiceMatch, UserRegistry, usernameFromProxyPath } from "./registry";
 import {
   verifyPassword,
   getSessionFromCookies,
@@ -31,6 +31,32 @@ function getSession(req: IncomingMessage, sessionSecret: string) {
 function sendHtml(res: ServerResponse, status: number, html: string): void {
   res.writeHead(status, { "Content-Type": "text/html; charset=utf-8" });
   res.end(html);
+}
+
+function findServiceFromReferer(
+  req: IncomingMessage,
+  registry: UserRegistry,
+  sessionUserId: string
+): ServiceMatch | null {
+  const referer = req.headers.referer;
+  if (typeof referer !== "string" || referer.length === 0) {
+    return null;
+  }
+
+  let refPath: string;
+  try {
+    refPath = new URL(referer, `http://${req.headers.host ?? "localhost"}`).pathname;
+  } catch {
+    return null;
+  }
+
+  const multiMatch = registry.findService(refPath);
+  if (multiMatch) {
+    const pathUser = usernameFromProxyPath(refPath);
+    return pathUser === sessionUserId ? multiMatch : null;
+  }
+
+  return registry.findLegacyService(refPath, sessionUserId);
 }
 
 function createHandler(
@@ -164,37 +190,42 @@ function createHandler(
       return;
     }
 
-    // Catch-all: redirect bare paths to /proxy/{username}{servicePath}...
-    // so that apps issuing absolute redirects (e.g. /lab) are rewritten
-    if (req.method === "GET" && pathname !== "/") {
-      const session = getSession(req, sessionSecret);
-      if (session.valid && session.userId) {
-        const user = registry.getUser(session.userId);
-        if (user) {
-          let bestService: typeof user.config.services[0] | null = null;
-          let bestLen = -1;
-          for (const svc of user.config.services) {
-            const sp = svc.path;
-            if (
-              pathname === sp ||
-              pathname.startsWith(sp + "/") ||
-              (pathname.startsWith(sp) && pathname[sp.length] === "?")
-            ) {
-              if (sp.length > bestLen) {
-                bestLen = sp.length;
-                bestService = svc;
-              }
+    const fallbackSession = getSession(req, sessionSecret);
+    if (fallbackSession.valid && fallbackSession.userId) {
+      const query = url.search || "";
+      const refererMatch = findServiceFromReferer(req, registry, fallbackSession.userId);
+      if (refererMatch) {
+        const forward = buildProxyForwardContext(
+          req,
+          refererMatch.username,
+          refererMatch.service.path,
+          refererMatch.legacy
+        );
+        proxyHttp(req, res, refererMatch.service, pathname + query, forward);
+        return;
+      }
+
+      // Catch-all: redirect bare service paths to /proxy/{username}{servicePath}...
+      const user = registry.getUser(fallbackSession.userId);
+      if (req.method === "GET" && pathname !== "/" && user) {
+        let bestService: typeof user.config.services[0] | null = null;
+        let bestLen = -1;
+        for (const svc of user.config.services) {
+          const sp = svc.path;
+          if (pathname === sp || pathname.startsWith(sp + "/")) {
+            if (sp.length > bestLen) {
+              bestLen = sp.length;
+              bestService = svc;
             }
           }
-          if (bestService) {
-            const rest = pathname.slice(bestService.path.length);
-            const query = url.search || "";
-            res.writeHead(302, {
-              Location: `/proxy/${session.userId}${bestService.path}${rest}${query}`,
-            });
-            res.end();
-            return;
-          }
+        }
+        if (bestService) {
+          const rest = pathname.slice(bestService.path.length);
+          res.writeHead(302, {
+            Location: `/proxy/${fallbackSession.userId}${bestService.path}${rest}${query}`,
+          });
+          res.end();
+          return;
         }
       }
     }
