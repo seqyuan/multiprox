@@ -3,3 +3,4 @@ dist/
 config.yaml
 *.log
 .DS_Store
+.annovibe-uploads/
