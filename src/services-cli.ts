@@ -104,7 +104,7 @@ async function promptAddService(): Promise<AddServiceInput> {
     const categoryRaw = await prompter.ask("分类", "");
     const category = categoryRaw.trim() || undefined;
 
-    const websocket = await prompter.askYesNo("启用 WebSocket", false);
+    const websocket = await prompter.askYesNo("启用 WebSocket", true);
 
     const servicePath = servicePathFromName(name);
     console.log("");

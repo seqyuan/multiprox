@@ -96,7 +96,7 @@ function validateServices(servicesRaw: unknown, requireNonEmpty = false): Servic
       host: resolvedHost,
       port: servicePort,
       path: normalizedPath,
-      websocket: websocket === true,
+      websocket: websocket !== false,
       category: typeof s.category === "string" && s.category.trim() ? s.category.trim() : undefined,
       order: typeof s.order === "number" ? s.order : undefined,
     });
@@ -318,7 +318,7 @@ export function addService(configPath: string, input: AddServiceInput): void {
       host,
       port: input.port,
       path: normalizeServicePath(input.path),
-      websocket: input.websocket === true,
+      websocket: input.websocket !== false,
       category: input.category?.trim() || undefined,
       order: nextServiceOrder(config.services),
     };

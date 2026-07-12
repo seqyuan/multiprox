@@ -87,7 +87,7 @@ function parseAddBody(raw: unknown): {
         : undefined,
     host,
     port: parsePort(body.port),
-    websocket: body.websocket === true,
+    websocket: body.websocket !== false,
     category:
       typeof body.category === "string" && body.category.trim()
         ? body.category.trim()

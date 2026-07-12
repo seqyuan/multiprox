@@ -415,7 +415,7 @@ export function dashboardPage(
   .read-only .fab-add { display: none; }
 </style>
 <header class="header">
-  <h1>MultiProx · ${escapeHtml(username)}</h1>
+  <h1>MultiProx</h1>
   <div class="header-actions">
     <button type="button" class="theme-btn" id="theme-toggle" onclick="toggleTheme()">🌙</button>
     <a href="/logout" class="logout-btn">退出</a>
@@ -442,8 +442,9 @@ ${writable ? '<button type="button" class="fab-add" id="fab-add" title="添加�
     <label for="add-category">分类</label>
     <input id="add-category" name="category" type="text">
     <label class="checkbox-row">
-      <input id="add-ws" name="websocket" type="checkbox">
-      <span>启用 WebSocket</span>
+      <input id="add-ws" name="websocket" type="checkbox" checked>
+      <span>WebSocket 代理</span>
+      <small style="color:var(--text-muted);font-size:0.75rem;display:block;margin-top:2px">默认开启，关闭后将拒绝 WebSocket 连接。Jupyter、RStudio 等需保持开启</small>
     </label>
     <div class="modal-actions">
       <button type="button" class="btn-secondary" id="add-cancel">取消</button>
@@ -467,7 +468,8 @@ ${writable ? '<button type="button" class="fab-add" id="fab-add" title="添加�
     <input id="edit-category" name="category" type="text">
     <label class="checkbox-row">
       <input id="edit-ws" name="websocket" type="checkbox">
-      <span>启用 WebSocket</span>
+      <span>WebSocket 代理</span>
+      <small style="color:var(--text-muted);font-size:0.75rem;display:block;margin-top:2px">默认开启，关闭后将拒绝 WebSocket 连接。Jupyter、RStudio 等需保持开启</small>
     </label>
     <div class="modal-actions">
       <button type="button" class="btn-secondary" id="edit-cancel">取消</button>
