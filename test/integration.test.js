@@ -311,9 +311,11 @@ test("proxy rewrites redirects, strips gateway cookie, and falls back by referer
   const statePath = path.join(tmp, "state.yaml");
   const gatewayPort = 30443;
   let lastCookie = "";
+  let lastOrigin = "";
 
   const backend = http.createServer((req, res) => {
     lastCookie = req.headers.cookie || "";
+    lastOrigin = req.headers.origin || "";
     if (req.url === "/") {
       res.writeHead(302, { Location: "/login" });
       res.end();
@@ -391,13 +393,17 @@ test("proxy rewrites redirects, strips gateway cookie, and falls back by referer
     port: gatewayPort,
     path: `/proxy/${TEST_USER}/app/`,
     method: "GET",
-    headers: { Cookie: `${cookie}; backend_cookie=yes` },
+    headers: {
+      Cookie: `${cookie}; backend_cookie=yes`,
+      Origin: `http://127.0.0.1:${gatewayPort}`,
+    },
   });
   assert.equal(proxied.status, 302);
   assert.equal(proxied.headers.location, `/proxy/${TEST_USER}/app/login`);
   assert.equal(lastCookie.includes("multiprox_session="), false);
   assert.equal(lastCookie.includes("multiprox_route="), false);
   assert.equal(lastCookie.includes("backend_cookie=yes"), true);
+  assert.equal(lastOrigin, `http://127.0.0.1:${backendPort}`);
   const routeCookie = findCookie(proxied.headers["set-cookie"], "multiprox_route");
   assert.match(routeCookie, /^multiprox_route=/);
 

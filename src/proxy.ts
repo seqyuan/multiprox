@@ -36,6 +36,8 @@ export function proxyWebSocket(
       const k = key.toLowerCase();
       if (k === "host") {
         headers.push(`host: ${targetHost}:${targetPort}`);
+      } else if (k === "origin") {
+        headers.push(`origin: http://${targetHost}:${targetPort}`);
       } else if (k === "cookie") {
         const values = Array.isArray(value) ? value : value !== undefined ? [value] : [];
         for (const raw of values) {
@@ -205,6 +207,9 @@ export function proxyHttp(
   delete headers["proxy-connection"];
   applyForwardedHeaders(headers, req, forward);
   headers.host = `${service.host}:${service.port}`;
+  if (headers.origin) {
+    headers.origin = `http://${service.host}:${service.port}`;
+  }
 
   const proxyReq = http.request(options, (proxyRes) => {
     const resHeaders = { ...proxyRes.headers };
