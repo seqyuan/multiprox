@@ -8,11 +8,14 @@ import { runAdd, runList, runRemove } from "./services-cli";
 import { runLayout } from "./layout-cli";
 import { getDefaultStatePath } from "./paths";
 import { DaemonOptions } from "./options";
+import pkg from "../package.json";
+
+const VERSION = pkg.version;
 
 type Command = "serve" | "stop" | "passwd" | "add" | "list" | "remove" | "layout";
 
 function printHelp(): void {
-  console.log(`MultiProx — 多服务认证反向代理入口（共享网关）
+  console.log(`MultiProx v${VERSION} — 多服务认证反向代理入口（共享网关）
 
 用法:
   multiprox [选项]                         启动共享网关 daemon
