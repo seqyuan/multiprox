@@ -132,11 +132,7 @@ function createHandler(
       }
 
       const query = url.search || "";
-      // Preserve service.path so the backend sees e.g. /lab/tree
-      // instead of bare /.  Combined with the catch-all redirect below,
-      // this matches auth_jupyter_proxy.py behaviour: the backend's
-      // internal redirects (e.g. /lab) work end-to-end.
-      const proxiedPath = match.service.path + match.remainingPath + query;
+      const proxiedPath = match.remainingPath + query;
       const forward = buildProxyForwardContext(
         req,
         match.username,
@@ -249,7 +245,7 @@ function createUpgradeHandler(registry: UserRegistry, sessionSecret: string) {
     }
 
     const query = url.search || "";
-    const proxiedPath = match.service.path + match.remainingPath + query;
+    const proxiedPath = match.remainingPath + query;
     proxyWebSocket(req, socket, head, match.service, proxiedPath);
   };
 }
