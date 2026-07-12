@@ -1,0 +1,45 @@
+{
+  "name": "@seqyuan/multiprox",
+  "version": "1.1.0",
+  "description": "Multi-service authenticated reverse proxy hub",
+  "main": "dist/server.js",
+  "bin": {
+    "multiprox": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "config.example.yaml",
+    "state.example.yaml",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "npm run build && node --test test/integration.test.js",
+    "prepublishOnly": "npm run build",
+    "start": "node dist/cli.js",
+    "dev": "tsc && node dist/cli.js"
+  },
+  "keywords": [
+    "proxy",
+    "reverse-proxy",
+    "authentication",
+    "multiprox"
+  ],
+  "author": "seqyuan",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/seqyuan/multiprox.git"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "js-yaml": "^4.1.0"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.2"
+  }
+}

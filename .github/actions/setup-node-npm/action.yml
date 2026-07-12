@@ -1,0 +1,32 @@
+name: Setup Node and npm
+description: Configure Node.js and install dependencies with npm.
+
+inputs:
+  node-version:
+    description: Node.js version to install.
+    required: false
+    default: "22"
+  install:
+    description: Whether to install dependencies.
+    required: false
+    default: "true"
+  working-directory:
+    description: Directory containing package.json and package-lock.json.
+    required: false
+    default: "."
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Node
+      uses: actions/setup-node@v6
+      with:
+        node-version: ${{ inputs.node-version }}
+        cache: npm
+        cache-dependency-path: ${{ inputs.working-directory }}/package-lock.json
+
+    - name: Install Dependencies
+      if: ${{ inputs.install == 'true' }}
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: npm ci

@@ -1,0 +1,81 @@
+name: npm-publish
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: npm-publish
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Setup npm
+        uses: ./.github/actions/setup-node-npm
+        with:
+          install: "true"
+
+      - name: Read Package Version
+        id: package
+        run: echo "version=$(jq -r .version package.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Verify Tag Matches Version
+        run: |
+          tag_version="${GITHUB_REF_NAME#v}"
+          pkg_version=$(jq -r .version package.json)
+          if [ "$tag_version" != "$pkg_version" ]; then
+            echo "tag ${GITHUB_REF_NAME} does not match package version ${pkg_version}" >&2
+            exit 1
+          fi
+
+      - name: Verify Tag Commit Is On main
+        run: |
+          git fetch origin main --force
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" "origin/main"; then
+            echo "tag ${GITHUB_REF_NAME} points to a commit outside origin/main" >&2
+            exit 1
+          fi
+
+      - name: Check npm token
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo "missing environment secret NPM_TOKEN" >&2
+            exit 1
+          fi
+
+      - name: Build
+        run: npm run build
+
+      - name: Test
+        run: npm test
+
+      - name: Publish To npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          echo "//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}" > ~/.npmrc
+          pkg="@seqyuan/multiprox"
+          version="${{ steps.package.outputs.version }}"
+
+          if npm view "${pkg}@${version}" version >/dev/null 2>&1; then
+            echo "${pkg}@${version} already published, ensuring public access..."
+            npm access set status=public "$pkg"
+          else
+            npm publish --access public
+          fi
