@@ -59,6 +59,34 @@ function findServiceFromReferer(
   return registry.findLegacyService(refPath, sessionUserId);
 }
 
+function proxyFromReferer(
+  req: IncomingMessage,
+  res: ServerResponse,
+  pathname: string,
+  query: string,
+  registry: UserRegistry,
+  sessionSecret: string
+): boolean {
+  const session = getSession(req, sessionSecret);
+  if (!session.valid || !session.userId) {
+    return false;
+  }
+
+  const refererMatch = findServiceFromReferer(req, registry, session.userId);
+  if (!refererMatch) {
+    return false;
+  }
+
+  const forward = buildProxyForwardContext(
+    req,
+    refererMatch.username,
+    refererMatch.service.path,
+    refererMatch.legacy
+  );
+  proxyHttp(req, res, refererMatch.service, pathname + query, forward);
+  return true;
+}
+
 function createHandler(
   registry: UserRegistry,
   state: StateConfig,
@@ -89,6 +117,10 @@ function createHandler(
     }
 
     if (req.method === "POST" && pathname === "/login") {
+      if (proxyFromReferer(req, res, pathname, url.search || "", registry, sessionSecret)) {
+        return;
+      }
+
       try {
         const ip = clientIp(req);
         const rateKey = `${ip}`;
@@ -193,15 +225,7 @@ function createHandler(
     const fallbackSession = getSession(req, sessionSecret);
     if (fallbackSession.valid && fallbackSession.userId) {
       const query = url.search || "";
-      const refererMatch = findServiceFromReferer(req, registry, fallbackSession.userId);
-      if (refererMatch) {
-        const forward = buildProxyForwardContext(
-          req,
-          refererMatch.username,
-          refererMatch.service.path,
-          refererMatch.legacy
-        );
-        proxyHttp(req, res, refererMatch.service, pathname + query, forward);
+      if (proxyFromReferer(req, res, pathname, query, registry, sessionSecret)) {
         return;
       }
 
