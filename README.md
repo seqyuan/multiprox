@@ -34,8 +34,6 @@ http://lab.example.com:1907/proxy/bob/gpu-node/
 
 ---
 
-
-
 ## 一分钟上手
 
 ```bash
@@ -44,6 +42,7 @@ multiprox
 # 或指定端口：multiprox --port 1908
 
 # ② 用户 alice：设密码（共享网关下会自动修复目录权限）
+# linux用户账号即为登陆账号
 multiprox passwd
 
 # ③ 浏览器管理（推荐）
@@ -53,8 +52,6 @@ http://lab.example.com:1907/  →  登录  →  点 + 添加、拖动排序、�
 # multiprox add          # 交互式添加服务端口
 # multiprox layout       # 交互式排序与分类
 ```
-
-
 
 ## 工作流程
 
@@ -79,8 +76,6 @@ http://lab.example.com:1907/  →  登录  →  点 + 添加、拖动排序、�
 
 ---
 
-
-
 ## 安装
 
 需要 Node.js >= 18。
@@ -92,11 +87,7 @@ multiprox --help
 
 ---
 
-
-
 ## 快速开始
-
-
 
 ### 1. 运维：启动共享网关（一次）
 
@@ -110,8 +101,6 @@ multiprox
 multiprox --host 0.0.0.0 --port 1908   # 自定义端口，写入 state.yaml
 multiprox stop                          # 停止后台实例
 ```
-
-
 
 ### 2. 普通用户：设置密码
 
@@ -138,6 +127,8 @@ multiprox layout    # 终端交互：上移/下移/改分类
 
 服务名 `jupyter` 自动生成代理路径 `/jupyter`。默认后端地址 `127.0.0.1`。
 
+登录后除 `/proxy/<用户>/jupyter/` 外，也兼容旧版单用户路径 `/proxy/jupyter/`（Jupyter `base_url` 可保持不变）。
+
 ### 4. 浏览器访问
 
 1. 打开 `http://<服务器>:1907/`
@@ -146,11 +137,7 @@ multiprox layout    # 终端交互：上移/下移/改分类
 
 ---
 
-
-
 ## 命令参考
-
-
 
 ### 启动 / 停止 daemon
 
@@ -163,8 +150,6 @@ multiprox stop [选项]
   --port <port>        网关监听端口（默认 1907；写入 state.yaml）
   -h, --help
 ```
-
-
 
 ### 用户命令
 
@@ -181,8 +166,6 @@ multiprox layout
 > `multiprox --port` 是**网关监听端口**；`multiprox add` 交互填写的端口是**后端服务端口**，两者不同。
 
 ---
-
-
 
 ## passwd 与目录权限
 
@@ -219,8 +202,6 @@ multiprox layout
 - **666 配置**：所有人可读写；网关以他人身份运行时可直接更新配置（比 644/664 更直接）
 - 密码仅存 **SHA-256 哈希**，但配置对本机所有用户可写，请使用足够强的 MultiProx 密码
 
-
-
 ### 终端输出示例
 
 共享网关（权限有变更）：
@@ -243,28 +224,10 @@ multiprox layout
 [multiprox] gateway operator is current user; home/config permissions unchanged
 ```
 
-
-
-### 自检与排错
-
-```bash
-namei -l ~/.config/multiprox/config.yaml
-```
-
-请网关运行者验证能否读取你的配置（将 `alice` 换成你的用户名）：
-
-```bash
-cat /home/alice/.config/multiprox/config.yaml
-```
-
-- 能 `cat` 出内容 → daemon 能加载你的服务
-- 网页能添加/拖动 → 写权限正常
 - 仪表盘无服务或网页无法保存 → 重新执行 `multiprox passwd`
 - 若 home 为 `700` 且不愿开放进入权限 → 不适用共享网关模式
 
 ---
-
-
 
 ## License
 

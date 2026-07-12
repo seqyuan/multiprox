@@ -292,6 +292,55 @@ test("proxy forwarded headers for subpath apps", () => {
   assert.equal(headers["x-forwarded-for"], "203.0.113.1, 10.0.0.5");
   assert.equal(headers["x-forwarded-prefix"], "/proxy/alice/annovibe");
   assert.equal(headers["x-forwarded-host"], "lab.example.com:1907");
+
+  const legacy = buildProxyForwardContext(req, "alice", "/jupyter", true);
+  assert.equal(legacy.prefix, "/proxy/jupyter");
+});
+
+test("legacy proxy path routing", () => {
+  const { UserRegistry } = require(path.join(ROOT, "dist", "registry"));
+  const yaml = require("js-yaml");
+
+  const tmp = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "multiprox-legacy-"));
+  const testHome = path.join(tmp, "home");
+  const userHome = path.join(testHome, TEST_USER);
+  const configPath = path.join(userHome, ".config", "multiprox", "config.yaml");
+  const statePath = path.join(tmp, "state.yaml");
+
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  const { hashPassword } = require(path.join(ROOT, "dist", "auth"));
+  fs.writeFileSync(
+    configPath,
+    yaml.dump({
+      auth: { password_hash: hashPassword("pass123") },
+      services: [
+        { id: "jupyter", name: "Jupyter", host: "127.0.0.1", port: 1902, path: "/jupyter", websocket: true },
+        { id: "echo", name: "Echo", host: "127.0.0.1", port: 9999, path: "/echo", websocket: false },
+      ],
+    })
+  );
+  fs.writeFileSync(
+    statePath,
+    yaml.dump({
+      server: { host: "127.0.0.1", port: 1 },
+      users: { home_prefix: testHome, scan_homes: true },
+    })
+  );
+
+  const { loadState } = require(path.join(ROOT, "dist", "state"));
+  const registry = new UserRegistry(loadState(statePath));
+  registry.reload();
+
+  const legacy = registry.findLegacyService("/proxy/jupyter/lab", TEST_USER);
+  assert.ok(legacy);
+  assert.equal(legacy.service.id, "jupyter");
+  assert.equal(legacy.remainingPath, "/lab");
+  assert.equal(legacy.legacy, true);
+
+  const multi = registry.findService(`/proxy/${TEST_USER}/jupyter/lab`);
+  assert.ok(multi);
+  assert.equal(multi.service.id, "jupyter");
+  assert.equal(multi.remainingPath, "/lab");
 });
 
 test("stop command stops running daemon", async () => {

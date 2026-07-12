@@ -18,6 +18,64 @@ const HOP_BY_HOP_HEADERS = new Set([
   "proxy-connection",
 ]);
 
+export function proxyWebSocket(
+  req: IncomingMessage,
+  clientSocket: Socket,
+  head: Buffer,
+  service: ServiceConfig,
+  proxiedPath: string
+): void {
+  const targetHost = service.host;
+  const targetPort = service.port;
+
+  const backendSocket = net.connect(targetPort, targetHost, () => {
+    const reqLine = `${req.method} ${proxiedPath} HTTP/${req.httpVersion}\r\n`;
+
+    const headers: string[] = [];
+    for (const [key, value] of Object.entries(req.headers)) {
+      const k = key.toLowerCase();
+      if (k === "host") {
+        headers.push(`host: ${targetHost}:${targetPort}`);
+      } else if (k !== "connection" && k !== "proxy-connection" && k !== "upgrade-insecure-requests") {
+        if (Array.isArray(value)) {
+          for (const v of value) headers.push(`${key}: ${v}`);
+        } else if (value !== undefined) {
+          headers.push(`${key}: ${value}`);
+        }
+      }
+    }
+
+    backendSocket.write(reqLine + headers.join("\r\n") + "\r\n\r\n");
+    if (head.length > 0) {
+      backendSocket.write(head);
+    }
+  });
+
+  backendSocket.on("data", (data: Buffer) => {
+    clientSocket.write(data);
+  });
+
+  clientSocket.on("data", (data: Buffer) => {
+    backendSocket.write(data);
+  });
+
+  backendSocket.on("error", () => {
+    clientSocket.destroy();
+  });
+
+  clientSocket.on("error", () => {
+    backendSocket.destroy();
+  });
+
+  backendSocket.on("close", () => {
+    clientSocket.end();
+  });
+
+  clientSocket.on("close", () => {
+    backendSocket.end();
+  });
+}
+
 export interface ProxyForwardContext {
   prefix: string;
   clientIp: string;
@@ -28,11 +86,12 @@ export interface ProxyForwardContext {
 export function buildProxyForwardContext(
   req: IncomingMessage,
   username: string,
-  servicePath: string
+  servicePath: string,
+  legacy = false
 ): ProxyForwardContext {
   const hostHeader = req.headers.host;
   return {
-    prefix: `/proxy/${username}${servicePath}`,
+    prefix: legacy ? `/proxy${servicePath}` : `/proxy/${username}${servicePath}`,
     clientIp: clientIp(req),
     proto: isSecureRequest(req) ? "https" : "http",
     host: typeof hostHeader === "string" && hostHeader.length > 0 ? hostHeader : "localhost",
@@ -121,69 +180,4 @@ export function proxyHttp(
   });
 
   req.pipe(proxyReq);
-}
-
-export function proxyWebSocket(
-  req: IncomingMessage,
-  clientSocket: Socket,
-  head: Buffer,
-  service: ServiceConfig,
-  proxiedPath: string,
-  forward: ProxyForwardContext
-): void {
-  const forwarded = buildForwardedHeaderValues(
-    forward,
-    typeof req.headers["x-forwarded-for"] === "string" ? req.headers["x-forwarded-for"] : undefined
-  );
-
-  const backendSocket = net.connect(service.port, service.host, () => {
-    const lines: string[] = [];
-    lines.push(`${req.method} ${proxiedPath} HTTP/1.1`);
-
-    const headerLines: string[] = [];
-    for (const [key, value] of Object.entries(req.headers)) {
-      if (!value) continue;
-      const lower = key.toLowerCase();
-      if (lower === "host") continue;
-      if (HOP_BY_HOP_HEADERS.has(lower)) continue;
-      if (lower.startsWith("x-forwarded-")) continue;
-      if (Array.isArray(value)) {
-        for (const v of value) {
-          headerLines.push(`${key}: ${v}`);
-        }
-      } else {
-        headerLines.push(`${key}: ${value}`);
-      }
-    }
-
-    for (const [key, value] of Object.entries(forwarded)) {
-      headerLines.push(`${key}: ${value}`);
-    }
-
-    headerLines.push(`Host: ${service.host}:${service.port}`);
-    lines.push(...headerLines);
-    lines.push("", "");
-
-    backendSocket.write(lines.join("\r\n"));
-    if (head.length > 0) {
-      backendSocket.write(head);
-    }
-  });
-
-  const destroyBoth = () => {
-    if (!clientSocket.destroyed) clientSocket.destroy();
-    if (!backendSocket.destroyed) backendSocket.destroy();
-  };
-
-  clientSocket.on("error", destroyBoth);
-  backendSocket.on("error", destroyBoth);
-  clientSocket.on("close", () => {
-    if (!backendSocket.destroyed) backendSocket.end();
-  });
-  backendSocket.on("close", () => {
-    if (!clientSocket.destroyed) clientSocket.end();
-  });
-
-  clientSocket.pipe(backendSocket);
-  backendSocket.pipe(clientSocket);
 }

@@ -8,6 +8,8 @@ export interface ServiceMatch {
   username: string;
   service: ServiceConfig;
   remainingPath: string;
+  /** Legacy single-user style prefix: /proxy{service.path} */
+  legacy?: boolean;
 }
 
 export interface LoadedUser {
@@ -148,6 +150,61 @@ export class UserRegistry {
     }
 
     return bestMatch;
+  }
+
+  /** Legacy path compatible with single-user MultiProx: /proxy{service.path}/... */
+  findLegacyService(requestPath: string, username: string): ServiceMatch | null {
+    this.ensureFresh();
+
+    const user = this.users.get(username);
+    if (!user) {
+      return null;
+    }
+
+    const prefix = "/proxy/";
+    if (!requestPath.startsWith(prefix)) {
+      return null;
+    }
+
+    let bestMatch: ServiceMatch | null = null;
+    let bestLen = -1;
+
+    for (const service of user.config.services) {
+      const legacyPrefix = `/proxy${service.path}`;
+      if (
+        requestPath === legacyPrefix ||
+        requestPath.startsWith(legacyPrefix + "/") ||
+        requestPath.startsWith(legacyPrefix + "?")
+      ) {
+        if (service.path.length <= bestLen) {
+          continue;
+        }
+        let remaining = requestPath.slice(legacyPrefix.length);
+        if (!remaining.startsWith("/") && remaining.length > 0 && !remaining.startsWith("?")) {
+          continue;
+        }
+        if (remaining === "") {
+          remaining = "/";
+        }
+        bestLen = service.path.length;
+        bestMatch = {
+          username,
+          service,
+          remainingPath: remaining,
+          legacy: true,
+        };
+      }
+    }
+
+    return bestMatch;
+  }
+
+  findServiceForUser(requestPath: string, sessionUserId: string): ServiceMatch | null {
+    const multiUser = this.findService(requestPath);
+    if (multiUser) {
+      return multiUser;
+    }
+    return this.findLegacyService(requestPath, sessionUserId);
   }
 }
 

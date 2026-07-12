@@ -115,13 +115,17 @@ function createHandler(
         return;
       }
 
-      const pathUser = usernameFromProxyPath(pathname);
-      if (!pathUser || pathUser !== session.userId) {
-        sendHtml(res, 403, notFoundPage());
-        return;
+      const multiMatch = registry.findService(pathname);
+      if (multiMatch) {
+        const pathUser = usernameFromProxyPath(pathname);
+        if (!pathUser || pathUser !== session.userId) {
+          sendHtml(res, 403, notFoundPage());
+          return;
+        }
       }
 
-      const match = registry.findService(pathname);
+      const match =
+        multiMatch ?? registry.findLegacyService(pathname, session.userId);
       if (!match) {
         sendHtml(res, 404, notFoundPage());
         return;
@@ -129,7 +133,12 @@ function createHandler(
 
       const query = url.search || "";
       const proxiedPath = match.remainingPath + query;
-      const forward = buildProxyForwardContext(req, match.username, match.service.path);
+      const forward = buildProxyForwardContext(
+        req,
+        match.username,
+        match.service.path,
+        match.legacy
+      );
       proxyHttp(req, res, match.service, proxiedPath, forward);
       return;
     }
@@ -176,14 +185,18 @@ function createUpgradeHandler(registry: UserRegistry, sessionSecret: string) {
       return;
     }
 
-    const pathUser = usernameFromProxyPath(pathname);
-    if (!pathUser || pathUser !== session.userId) {
-      socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
-      socket.destroy();
-      return;
+    const multiMatch = registry.findService(pathname);
+    if (multiMatch) {
+      const pathUser = usernameFromProxyPath(pathname);
+      if (!pathUser || pathUser !== session.userId) {
+        socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
+        socket.destroy();
+        return;
+      }
     }
 
-    const match = registry.findService(pathname);
+    const match =
+      multiMatch ?? registry.findLegacyService(pathname, session.userId);
     if (!match) {
       socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
       socket.destroy();
@@ -198,8 +211,7 @@ function createUpgradeHandler(registry: UserRegistry, sessionSecret: string) {
 
     const query = url.search || "";
     const proxiedPath = match.remainingPath + query;
-    const forward = buildProxyForwardContext(req, match.username, match.service.path);
-    proxyWebSocket(req, socket, head, match.service, proxiedPath, forward);
+    proxyWebSocket(req, socket, head, match.service, proxiedPath);
   };
 }
 
