@@ -5,10 +5,10 @@
 MultiProx 是面向实验室、登录节点的**多用户认证反向代理**：志愿者启动一个共享网关，普通用户用 **SSH 终端 CLI** 管理转发，登录网页后点击卡片统一访问，无需每人记不同端口。
 
 <p align="center">
-  <img src="docs/images/multiprox-preview.png" alt="MultiProx 登录页与仪表盘示例" width="720">
+  <img src="docs/images/multiprox-preview.png" alt="MultiProx 登录页与只读仪表盘示意图" width="720">
 </p>
 
-<p align="center"><sub>网页端示例：登录 → 只读仪表盘点击访问服务；添加/排序在 SSH 终端用 CLI</sub></p>
+<p align="center"><sub>示意图：登录页 + 只读仪表盘（点击卡片访问；配置管理在 SSH 终端用 CLI）</sub></p>
 
 ---
 
@@ -159,7 +159,7 @@ gpu-node   192.168.0.109:1901 /gpu-node  GPU 节点
 - 每用户独立 MultiProx 密码（与系统登录密码无关）
 - 一个共享 daemon 扫描所有用户配置并提供代理
 - 网页仪表盘**只读**（登录、浏览、点击代理）；配置管理在 SSH 终端完成
-- CLI：`add` / `remove` / `layout`（终端交互排序与分类）
+- CLI：`add`（无参数时交互式）/ `remove` / `layout`（终端交互排序与分类）
 - 用户配置为 **YAML**（`~/.config/multiprox/config.yaml`），非 INI
 - 零重型框架，Node.js 原生 `http` + `js-yaml`
 
@@ -286,7 +286,7 @@ multiprox layout    # 终端交互：上移/下移/改分类
 2. 输入 **Linux 用户名** + **MultiProx 密码** 登录
 3. 点击卡片进入服务，或访问 `/proxy/<用户名>/<服务名>/`
 
-网页仅用于访问服务；添加/删除/排序请用上方 CLI。
+网页仅用于访问服务；添加/删除/排序请用上方 CLI。仪表盘由服务端渲染；`GET /api/services` 可读服务列表，写操作（POST/PUT/DELETE）返回 405。
 
 ---
 
@@ -307,10 +307,16 @@ multiprox [选项]
 
 ```bash
 multiprox passwd                              # 设置/重置当前用户密码
-multiprox add [选项] [name] [description]   # 无 name/--port 时进入交互
+multiprox add [选项] [name] [description]     # 无 name 或 --port 时进入交互
 multiprox list                                # 列出当前用户转发
 multiprox remove <name>                       # 按名称删除
 multiprox layout                              # 终端交互式排序与分类
+
+add 选项:
+  --host <host>         后端地址（默认 127.0.0.1）
+  --port <port>         后端端口
+  --category <name>     分类名称
+  --ws                  启用 WebSocket
 
   -c, --config <path>  指定用户配置文件（默认 ~/.config/multiprox/config.yaml）
 ```
@@ -325,7 +331,7 @@ multiprox layout                              # 终端交互式排序与分类
 ~/.config/multiprox/config.yaml
 ```
 
-也支持使用 `.yml` 扩展名（若你自行创建符号链接或指定 `-c` 路径）。CLI 和网页保存时默认写入 `config.yaml`。
+也支持使用 `.yml` 扩展名（若你自行创建符号链接或指定 `-c` 路径）。**仅 CLI** 写入 `config.yaml`（网页仪表盘只读，不修改配置）。
 
 ### 用户配置 `~/.config/multiprox/config.yaml`
 
@@ -348,7 +354,8 @@ services:
 | 字段 | 说明 |
 |------|------|
 | `category` | 网页仪表盘分类（可选） |
-| `order` | 排序权重，越小越靠前；网页拖拽会自动更新 |
+| `order` | 排序权重，越小越靠前；由 `multiprox layout` 更新 |
+| `icon` | 可选图标标识（仅 YAML 手写；CLI 暂不支持） |
 
 通常无需手写，用 `multiprox passwd` / `multiprox add` 自动维护。
 
@@ -436,7 +443,7 @@ cat /home/alice/.config/multiprox/config.yaml
 | 登录、浏览仪表盘、点击卡片代理 | 网页 |
 | 添加 / 删除 / 排序分类 | SSH 终端：`multiprox add` / `remove` / `layout` |
 
-共享网关下用户通常**没有**长期开放端口或常驻进程的条件，因此网页仪表盘设计为**只读**，避免 `multiprox agent` 一类需后台运行的方案。
+共享网关下用户通常**没有**长期开放端口或常驻进程的条件，因此网页仪表盘设计为**只读**，配置变更均在 SSH 终端用 CLI 完成。
 
 ### 用户 home 路径假设
 
@@ -458,10 +465,11 @@ daemon 扫描 `{home_prefix}/{linux用户名}/.config/multiprox/config.yaml`（�
 | 项目 | 说明 |
 |------|------|
 | 登录密码 | 每用户独立，存 SHA-256 哈希；与 Linux 系统密码无关 |
+| 登录限流 | 每 IP 10 次失败 / 15 分钟，超限返回 429 |
 | Session | HMAC 签名 Cookie；HTTPS 或 `X-Forwarded-Proto: https` 时自动加 `Secure` |
 | 代理隔离 | 只能访问 `/proxy/<自己的用户名>/...`，不能越权访问他人路径 |
 | 子路径转发头 | 向后端附加 `X-Forwarded-Host` / `Proto` / `Prefix` / `For`，便于 annovibe 等识别外部 URL |
-| 后端地址 | 仅允许本机（`127.0.0.1`）和私网（`10.x` / `172.16-31.x` / `192.168.x`），禁止转发到公网 |
+| 后端地址 | 仅允许本机（`127.0.0.1` / `localhost` / `::1`）和私网（`10.x` / `172.16-31.x` / `192.168.x`），禁止转发到公网 |
 | 配置文件 | 默认 `chmod 644` 时本机用户可读哈希；请设置足够强的 MultiProx 密码 |
 
 ---
@@ -556,11 +564,11 @@ npm start
 发布到 npm（维护者）：
 
 ```bash
-git tag v1.0.0
-git push origin v1.0.0
+git tag v1.1.0
+git push origin v1.1.0
 ```
 
-GitHub Actions 会在 tag 推送后自动发布 `@seqyuan/multiprox`。
+GitHub Actions 会在 tag 推送后运行 test 并发布 `@seqyuan/multiprox`（tag 版本须与 `package.json` 一致）。
 
 ---
 
