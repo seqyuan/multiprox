@@ -323,6 +323,11 @@ test("proxy rewrites redirects, strips gateway cookie, and falls back by referer
       res.end("asset-ok");
       return;
     }
+    if (req.url === "/?after=login") {
+      res.writeHead(200, { "Content-Type": "text/plain" });
+      res.end("backend-root-ok");
+      return;
+    }
     if (req.url === "/api/auth/login" || req.url === "/login?next=%2Flab") {
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ backend: true, url: req.url }));
@@ -435,6 +440,19 @@ test("proxy rewrites redirects, strips gateway cookie, and falls back by referer
   });
   assert.equal(backendLogin.status, 200, backendLogin.body);
   assert.match(backendLogin.body, /"url":"\/login\?next=%2Flab"/);
+
+  const backendRoot = await httpRequest({
+    hostname: "127.0.0.1",
+    port: gatewayPort,
+    path: "/?after=login",
+    method: "GET",
+    headers: {
+      Cookie: cookie,
+      Referer: `http://127.0.0.1:${gatewayPort}/proxy/${TEST_USER}/app/login`,
+    },
+  });
+  assert.equal(backendRoot.status, 200, backendRoot.body);
+  assert.equal(backendRoot.body, "backend-root-ok");
 });
 
 test("legacy proxy path routing", () => {

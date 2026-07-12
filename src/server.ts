@@ -201,6 +201,14 @@ function createHandler(
       return;
     }
 
+    const fallbackSession = getSession(req, sessionSecret);
+    if (fallbackSession.valid && fallbackSession.userId) {
+      const query = url.search || "";
+      if (proxyFromReferer(req, res, pathname, query, registry, sessionSecret)) {
+        return;
+      }
+    }
+
     if (req.method === "GET" && pathname === "/") {
       const session = getSession(req, sessionSecret);
       if (session.valid && session.userId) {
@@ -222,12 +230,8 @@ function createHandler(
       return;
     }
 
-    const fallbackSession = getSession(req, sessionSecret);
     if (fallbackSession.valid && fallbackSession.userId) {
       const query = url.search || "";
-      if (proxyFromReferer(req, res, pathname, query, registry, sessionSecret)) {
-        return;
-      }
 
       // Catch-all: redirect bare service paths to /proxy/{username}{servicePath}...
       const user = registry.getUser(fallbackSession.userId);
