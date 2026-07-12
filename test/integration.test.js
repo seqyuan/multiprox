@@ -76,6 +76,12 @@ function parseCookie(setCookie) {
   return raw.split(";")[0];
 }
 
+function findCookie(setCookie, name) {
+  const rows = Array.isArray(setCookie) ? setCookie : setCookie ? [setCookie] : [];
+  const row = rows.find((item) => item.startsWith(`${name}=`));
+  return row ? row.split(";")[0] : "";
+}
+
 test("shared gateway login and web API writes", async (t) => {
   const tmp = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "multiprox-it-"));
   const testHome = path.join(tmp, "home");
@@ -390,7 +396,10 @@ test("proxy rewrites redirects, strips gateway cookie, and falls back by referer
   assert.equal(proxied.status, 302);
   assert.equal(proxied.headers.location, `/proxy/${TEST_USER}/app/login`);
   assert.equal(lastCookie.includes("multiprox_session="), false);
+  assert.equal(lastCookie.includes("multiprox_route="), false);
   assert.equal(lastCookie.includes("backend_cookie=yes"), true);
+  const routeCookie = findCookie(proxied.headers["set-cookie"], "multiprox_route");
+  assert.match(routeCookie, /^multiprox_route=/);
 
   const external = await httpRequest({
     hostname: "127.0.0.1",
@@ -451,8 +460,18 @@ test("proxy rewrites redirects, strips gateway cookie, and falls back by referer
       Referer: `http://127.0.0.1:${gatewayPort}/proxy/${TEST_USER}/app/login`,
     },
   });
-  assert.equal(backendRoot.status, 200, backendRoot.body);
-  assert.equal(backendRoot.body, "backend-root-ok");
+  assert.equal(backendRoot.status, 302, backendRoot.body);
+  assert.equal(backendRoot.headers.location, `/proxy/${TEST_USER}/app/?after=login`);
+
+  const routeCookieAsset = await httpRequest({
+    hostname: "127.0.0.1",
+    port: gatewayPort,
+    path: "/_next/static/app.js",
+    method: "GET",
+    headers: { Cookie: `${cookie}; ${routeCookie}` },
+  });
+  assert.equal(routeCookieAsset.status, 200, routeCookieAsset.body);
+  assert.equal(routeCookieAsset.body, "asset-ok");
 });
 
 test("legacy proxy path routing", () => {

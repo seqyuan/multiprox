@@ -3,6 +3,7 @@ import { IncomingMessage } from "http";
 import { TLSSocket } from "tls";
 
 export const SESSION_COOKIE_NAME = "multiprox_session";
+export const ROUTE_COOKIE_NAME = "multiprox_route";
 
 export interface SessionResult {
   valid: boolean;

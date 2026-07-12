@@ -3,7 +3,7 @@ import * as net from "net";
 import { IncomingMessage, ServerResponse } from "http";
 import { Socket } from "net";
 import { ServiceConfig } from "./user-config";
-import { SESSION_COOKIE_NAME, isSecureRequest } from "./auth";
+import { ROUTE_COOKIE_NAME, SESSION_COOKIE_NAME, isSecureRequest } from "./auth";
 import { clientIp } from "./http-body";
 
 const HOP_BY_HOP_HEADERS = new Set([
@@ -124,7 +124,11 @@ function stripGatewayCookie(cookieHeader: string): string | undefined {
   const kept = cookieHeader
     .split(";")
     .map((part) => part.trim())
-    .filter((part) => part.length > 0 && !part.startsWith(`${SESSION_COOKIE_NAME}=`));
+    .filter((part) =>
+      part.length > 0 &&
+      !part.startsWith(`${SESSION_COOKIE_NAME}=`) &&
+      !part.startsWith(`${ROUTE_COOKIE_NAME}=`)
+    );
   return kept.length > 0 ? kept.join("; ") : undefined;
 }
 
@@ -162,6 +166,20 @@ function applyForwardedHeaders(
 
   for (const [key, value] of Object.entries(values)) {
     headers[key] = value;
+  }
+}
+
+function appendSetCookie(
+  headers: http.IncomingHttpHeaders,
+  cookie: string
+): void {
+  const existing = headers["set-cookie"];
+  if (Array.isArray(existing)) {
+    headers["set-cookie"] = [...existing, cookie];
+  } else if (typeof existing === "string") {
+    headers["set-cookie"] = [existing, cookie];
+  } else {
+    headers["set-cookie"] = [cookie];
   }
 }
 
@@ -203,6 +221,11 @@ export function proxyHttp(
         resHeaders["location"] = forward.prefix + loc;
       }
     }
+
+    appendSetCookie(
+      resHeaders,
+      `${ROUTE_COOKIE_NAME}=${encodeURIComponent(forward.prefix)}; HttpOnly; Path=/; SameSite=Lax`
+    );
 
     res.writeHead(status, resHeaders);
     proxyRes.pipe(res);

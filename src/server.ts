@@ -7,8 +7,10 @@ import { getPidPath } from "./paths";
 import { getRunningPid, setupDaemonShutdown, writePidFile, removePidFile } from "./daemon";
 import { ServiceMatch, UserRegistry, usernameFromProxyPath } from "./registry";
 import {
+  ROUTE_COOKIE_NAME,
   verifyPassword,
   getSessionFromCookies,
+  parseCookies,
   setSessionCookie,
   clearSessionCookie,
   isSecureRequest,
@@ -59,6 +61,48 @@ function findServiceFromReferer(
   return registry.findLegacyService(refPath, sessionUserId);
 }
 
+function findServiceFromRouteCookie(
+  req: IncomingMessage,
+  registry: UserRegistry,
+  sessionUserId: string
+): ServiceMatch | null {
+  const route = parseCookies(req.headers.cookie)[ROUTE_COOKIE_NAME];
+  if (!route) {
+    return null;
+  }
+
+  let routePath: string;
+  try {
+    routePath = decodeURIComponent(route);
+  } catch {
+    routePath = route;
+  }
+
+  const multiMatch = registry.findService(routePath);
+  if (multiMatch) {
+    const pathUser = usernameFromProxyPath(routePath);
+    return pathUser === sessionUserId ? multiMatch : null;
+  }
+
+  return registry.findLegacyService(routePath, sessionUserId);
+}
+
+function proxyFromMatch(
+  req: IncomingMessage,
+  res: ServerResponse,
+  match: ServiceMatch,
+  pathname: string,
+  query: string
+): void {
+  const forward = buildProxyForwardContext(
+    req,
+    match.username,
+    match.service.path,
+    match.legacy
+  );
+  proxyHttp(req, res, match.service, pathname + query, forward);
+}
+
 function proxyFromReferer(
   req: IncomingMessage,
   res: ServerResponse,
@@ -77,13 +121,19 @@ function proxyFromReferer(
     return false;
   }
 
-  const forward = buildProxyForwardContext(
-    req,
-    refererMatch.username,
-    refererMatch.service.path,
-    refererMatch.legacy
-  );
-  proxyHttp(req, res, refererMatch.service, pathname + query, forward);
+  if (req.method === "GET" && pathname === "/") {
+    const forward = buildProxyForwardContext(
+      req,
+      refererMatch.username,
+      refererMatch.service.path,
+      refererMatch.legacy
+    );
+    res.writeHead(302, { Location: `${forward.prefix}/${query}` });
+    res.end();
+    return true;
+  }
+
+  proxyFromMatch(req, res, refererMatch, pathname, query);
   return true;
 }
 
@@ -207,6 +257,13 @@ function createHandler(
       if (proxyFromReferer(req, res, pathname, query, registry, sessionSecret)) {
         return;
       }
+      if (pathname !== "/") {
+        const routeMatch = findServiceFromRouteCookie(req, registry, fallbackSession.userId);
+        if (routeMatch) {
+          proxyFromMatch(req, res, routeMatch, pathname, query);
+          return;
+        }
+      }
     }
 
     if (req.method === "GET" && pathname === "/") {
@@ -268,7 +325,26 @@ function createUpgradeHandler(registry: UserRegistry, sessionSecret: string) {
     const pathname = url.pathname;
 
     if (!pathname.startsWith("/proxy/")) {
-      socket.destroy();
+      const session = getSession(req, sessionSecret);
+      if (!session.valid || !session.userId) {
+        socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+        socket.destroy();
+        return;
+      }
+
+      const routeMatch = findServiceFromRouteCookie(req, registry, session.userId);
+      if (!routeMatch) {
+        socket.destroy();
+        return;
+      }
+      if (!routeMatch.service.websocket) {
+        socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
+        socket.destroy();
+        return;
+      }
+
+      const query = url.search || "";
+      proxyWebSocket(req, socket, head, routeMatch.service, pathname + query);
       return;
     }
 
