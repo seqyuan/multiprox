@@ -1,7 +1,10 @@
+import * as fs from "fs";
 import * as http from "http";
 import { IncomingMessage, ServerResponse } from "http";
 import { Socket } from "net";
-import { loadState, applyStateOverrides, getDefaultStatePath, StateConfig } from "./state";
+import { loadState, applyStateOverrides, persistServerConfig, getDefaultStatePath, StateConfig } from "./state";
+import { getPidPath } from "./paths";
+import { getRunningPid, setupDaemonShutdown, writePidFile, removePidFile } from "./daemon";
 import { UserRegistry, usernameFromProxyPath } from "./registry";
 import {
   verifyPassword,
@@ -136,7 +139,16 @@ function createHandler(
       if (session.valid && session.userId) {
         const user = registry.getUser(session.userId);
         const services = user?.config.services ?? [];
-        sendHtml(res, 200, dashboardPage(session.userId, services));
+        let writable = false;
+        if (user) {
+          try {
+            fs.accessSync(user.configPath, fs.constants.W_OK);
+            writable = true;
+          } catch {
+            writable = false;
+          }
+        }
+        sendHtml(res, 200, dashboardPage(session.userId, services, writable));
       } else {
         sendHtml(res, 200, loginPage());
       }
@@ -193,6 +205,15 @@ function createUpgradeHandler(registry: UserRegistry, sessionSecret: string) {
 
 export async function runServer(options: DaemonOptions): Promise<void> {
   const statePath = options.statePath ?? getDefaultStatePath();
+  persistServerConfig(statePath, options.host, options.port);
+
+  const runningPid = getRunningPid(statePath);
+  if (runningPid) {
+    throw new Error(
+      `multiprox is already running (pid ${runningPid}); stop it first: multiprox stop`
+    );
+  }
+
   let state = loadState(statePath);
   state = applyStateOverrides(state, {
     host: options.host,
@@ -218,8 +239,12 @@ export async function runServer(options: DaemonOptions): Promise<void> {
 
   const scanTimer = setInterval(() => registry.reload(), 10000);
 
+  const pidPath = getPidPath(statePath);
+
   await new Promise<void>((resolve, reject) => {
     server.listen(state.server.port, state.server.host, () => {
+      writePidFile(pidPath, process.pid);
+      setupDaemonShutdown(server, pidPath);
       console.log(
         `[multiprox] listening on http://${state.server.host}:${state.server.port}`
       );
@@ -228,8 +253,21 @@ export async function runServer(options: DaemonOptions): Promise<void> {
       console.log(`[multiprox] ${registry.listUsers().length} user(s) loaded`);
       resolve();
     });
-    server.on("error", reject);
+    server.on("error", (err: NodeJS.ErrnoException) => {
+      if (err.code === "EADDRINUSE") {
+        reject(
+          new Error(
+            `port ${state.server.port} is already in use; if multiprox is running, try: multiprox stop`
+          )
+        );
+        return;
+      }
+      reject(err);
+    });
   });
 
-  server.on("close", () => clearInterval(scanTimer));
+  server.on("close", () => {
+    clearInterval(scanTimer);
+    removePidFile(pidPath);
+  });
 }

@@ -23,15 +23,6 @@ export interface AddServiceInput {
   category?: string;
 }
 
-export interface ParsedAddArgv {
-  name?: string;
-  description?: string;
-  host: string;
-  port?: number;
-  websocket?: boolean;
-  category?: string;
-}
-
 function resolveConfigPath(userConfigPath?: string): string {
   return userConfigPath ?? getDefaultUserConfigPath();
 }
@@ -42,47 +33,6 @@ function parsePortValue(raw: string): number {
     throw new Error(`Invalid port: ${raw}`);
   }
   return port;
-}
-
-export function parseAddArgv(argv: string[]): ParsedAddArgv {
-  let host = DEFAULT_HOST;
-  let port: number | undefined;
-  let websocket: boolean | undefined;
-  let category: string | undefined;
-  const positionals: string[] = [];
-
-  for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i];
-    if (arg === "--host") {
-      host = argv[++i];
-      if (!host) throw new Error("Missing value for --host");
-    } else if (arg === "--port") {
-      port = parsePortValue(argv[++i] ?? "");
-    } else if (arg === "--category") {
-      const raw = argv[++i];
-      if (!raw) throw new Error("Missing value for --category");
-      category = raw;
-    } else if (arg === "--ws" || arg === "--websocket") {
-      websocket = true;
-    } else if (arg.startsWith("-")) {
-      throw new Error(`Unknown option: ${arg}`);
-    } else {
-      positionals.push(arg);
-    }
-  }
-
-  return {
-    name: positionals[0],
-    description: positionals.length > 1 ? positionals.slice(1).join(" ") : undefined,
-    host,
-    port,
-    websocket,
-    category,
-  };
-}
-
-export function needsInteractiveAdd(parsed: ParsedAddArgv): boolean {
-  return !parsed.name || parsed.port === undefined;
 }
 
 export function commitAddService(configPath: string, input: AddServiceInput): void {
@@ -103,9 +53,9 @@ export function commitAddService(configPath: string, input: AddServiceInput): vo
   console.log(`[multiprox] added ${input.name} -> ${input.host}:${input.port} at ${servicePath}`);
 }
 
-async function promptAddService(prefill: ParsedAddArgv): Promise<AddServiceInput> {
+async function promptAddService(): Promise<AddServiceInput> {
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
-    throw new Error("Interactive add requires a terminal. Use: multiprox add --port <port> <name>");
+    throw new Error("multiprox add requires an interactive terminal; run: multiprox add");
   }
 
   const prompter = createLinePrompter();
@@ -115,7 +65,7 @@ async function promptAddService(prefill: ParsedAddArgv): Promise<AddServiceInput
     console.log("MultiProx 添加端口转发（直接回车采用默认值）");
     console.log("");
 
-    let name = prefill.name ?? "";
+    let name = "";
     while (!name) {
       name = await prompter.ask("名称", undefined, true);
       if (!name) {
@@ -123,13 +73,10 @@ async function promptAddService(prefill: ParsedAddArgv): Promise<AddServiceInput
       }
     }
 
-    const description = await prompter.ask(
-      "说明",
-      prefill.description ?? ""
-    );
+    const description = await prompter.ask("说明", "");
     const desc = description.trim() || undefined;
 
-    let host = prefill.host || DEFAULT_HOST;
+    let host = DEFAULT_HOST;
     while (true) {
       host = await prompter.ask("后端地址", host);
       try {
@@ -140,7 +87,7 @@ async function promptAddService(prefill: ParsedAddArgv): Promise<AddServiceInput
       }
     }
 
-    let port = prefill.port;
+    let port: number | undefined;
     while (port === undefined) {
       const raw = await prompter.ask("端口", undefined, true);
       if (!raw) {
@@ -154,13 +101,10 @@ async function promptAddService(prefill: ParsedAddArgv): Promise<AddServiceInput
       }
     }
 
-    const categoryRaw = await prompter.ask("分类", prefill.category ?? "");
+    const categoryRaw = await prompter.ask("分类", "");
     const category = categoryRaw.trim() || undefined;
 
-    const websocket =
-      prefill.websocket !== undefined
-        ? prefill.websocket
-        : await prompter.askYesNo("启用 WebSocket", false);
+    const websocket = await prompter.askYesNo("启用 WebSocket", false);
 
     const servicePath = servicePathFromName(name);
     console.log("");
@@ -205,25 +149,15 @@ export function runList(userConfigPath?: string): void {
 }
 
 export async function runAdd(argv: string[], userConfigPath?: string): Promise<void> {
+  if (argv.length > 0) {
+    throw new Error("multiprox add is interactive only; run: multiprox add");
+  }
+
   const configPath = resolveConfigPath(userConfigPath);
   ensureUserConfigExists(configPath);
 
-  const parsed = parseAddArgv(argv);
-
-  if (needsInteractiveAdd(parsed)) {
-    const input = await promptAddService(parsed);
-    commitAddService(configPath, input);
-    return;
-  }
-
-  commitAddService(configPath, {
-    name: parsed.name!,
-    description: parsed.description,
-    host: parsed.host,
-    port: parsed.port!,
-    websocket: parsed.websocket === true,
-    category: parsed.category,
-  });
+  const input = await promptAddService();
+  commitAddService(configPath, input);
 }
 
 export function runRemove(nameOrId: string | undefined, userConfigPath?: string): void {

@@ -76,7 +76,7 @@ function parseCookie(setCookie) {
   return raw.split(";")[0];
 }
 
-test("shared gateway login and read-only API", async (t) => {
+test("shared gateway login and web API writes", async (t) => {
   const tmp = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "multiprox-it-"));
   const testHome = path.join(tmp, "home");
   const userHome = path.join(testHome, TEST_USER);
@@ -139,7 +139,7 @@ test("shared gateway login and read-only API", async (t) => {
   assert.equal(list.status, 200);
   assert.match(list.body, /"echo"/);
 
-  const addBlocked = await httpRequest(
+  const add = await httpRequest(
     {
       hostname: "127.0.0.1",
       port,
@@ -149,43 +149,123 @@ test("shared gateway login and read-only API", async (t) => {
         "Content-Type": "application/json",
         Cookie: cookie,
         "Content-Length": Buffer.byteLength(
-          JSON.stringify({ name: "new", port: 1, host: "127.0.0.1" })
+          JSON.stringify({ name: "newsvc", port: 18001, host: "127.0.0.1", category: "测试" })
         ),
       },
     },
-    JSON.stringify({ name: "new", port: 1, host: "127.0.0.1" })
+    JSON.stringify({ name: "newsvc", port: 18001, host: "127.0.0.1", category: "测试" })
   );
-  assert.equal(addBlocked.status, 405);
-  assert.match(addBlocked.body, /read-only/i);
+  assert.equal(add.status, 201, add.body);
+  assert.match(add.body, /"newsvc"/);
+
+  const layout = await httpRequest(
+    {
+      hostname: "127.0.0.1",
+      port,
+      path: "/api/services/layout",
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        Cookie: cookie,
+        "Content-Length": Buffer.byteLength(
+          JSON.stringify({
+            items: [
+              { id: "newsvc", order: 0, category: "测试" },
+              { id: "echo", order: 1 },
+            ],
+          })
+        ),
+      },
+    },
+    JSON.stringify({
+      items: [
+        { id: "newsvc", order: 0, category: "测试" },
+        { id: "echo", order: 1 },
+      ],
+    })
+  );
+  assert.equal(layout.status, 200, layout.body);
+  assert.match(layout.body, /"newsvc"/);
+
+  const del = await httpRequest({
+    hostname: "127.0.0.1",
+    port,
+    path: "/api/services/newsvc",
+    method: "DELETE",
+    headers: { Cookie: cookie },
+  });
+  assert.equal(del.status, 200, del.body);
 });
 
-test("add argv parsing and interactive detection", () => {
-  const { parseAddArgv, needsInteractiveAdd } = require(path.join(ROOT, "dist", "services-cli"));
+test("applySharedGatewayPermissions fixes traverse and config readability", () => {
+  const { applySharedGatewayPermissions } = require(path.join(ROOT, "dist", "config-perms"));
+  const tmp = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "multiprox-perm-"));
+  const home = path.join(tmp, "alice");
+  const configPath = path.join(home, ".config", "multiprox", "config.yaml");
 
-  const full = parseAddArgv([
-    "--port",
-    "1901",
-    "--host",
-    "10.0.0.2",
-    "--category",
-    "dev",
-    "--ws",
-    "jupyter",
-    "desc",
-  ]);
-  assert.equal(full.name, "jupyter");
-  assert.equal(full.description, "desc");
-  assert.equal(full.host, "10.0.0.2");
-  assert.equal(full.port, 1901);
-  assert.equal(full.category, "dev");
-  assert.equal(full.websocket, true);
-  assert.equal(needsInteractiveAdd(full), false);
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(configPath, "auth: {}\n", { mode: 0o600 });
+  fs.chmodSync(home, 0o700);
+  fs.chmodSync(path.join(home, ".config"), 0o700);
+  fs.chmodSync(path.dirname(configPath), 0o700);
 
-  const partial = parseAddArgv(["jupyter"]);
-  assert.equal(partial.name, "jupyter");
-  assert.equal(needsInteractiveAdd(partial), true);
+  const result = applySharedGatewayPermissions(configPath, home);
+  const changed = result.applied.filter((entry) => entry.changed).map((entry) => entry.path);
 
-  assert.equal(needsInteractiveAdd(parseAddArgv([])), true);
+  assert.ok(changed.includes(home));
+  assert.ok(changed.includes(configPath));
+  assert.equal(fs.statSync(home).mode & 0o777, 0o711);
+  assert.equal(fs.statSync(configPath).mode & 0o777, 0o666);
+});
+
+test("shouldApplySharedGatewayPermissions skips when gateway operator is current user", () => {
+  const { shouldApplySharedGatewayPermissions } = require(path.join(ROOT, "dist", "config-perms"));
+  const tmp = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "multiprox-perm3-"));
+  const home = path.join(tmp, "ops");
+  const stateDir = path.join(tmp, "state");
+  const statePath = path.join(stateDir, "state.yaml");
+  const configPath = path.join(home, ".config", "multiprox", "config.yaml");
+
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(configPath, "auth: {}\n", { mode: 0o600 });
+  fs.mkdirSync(stateDir, { recursive: true });
+  fs.writeFileSync(statePath, "server: { host: 127.0.0.1, port: 1 }\n");
+
+  const uid = fs.statSync(home).uid;
+  fs.chownSync(statePath, uid, fs.statSync(statePath).gid);
+
+  assert.equal(shouldApplySharedGatewayPermissions(configPath, statePath), false);
+});
+
+test("applySharedGatewayPermissions keeps permissive home unchanged", () => {
+  const { applySharedGatewayPermissions } = require(path.join(ROOT, "dist", "config-perms"));
+  const tmp = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "multiprox-perm2-"));
+  const home = path.join(tmp, "bob");
+  const configPath = path.join(home, ".config", "multiprox", "config.yaml");
+
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(configPath, "auth: {}\n");
+  fs.chmodSync(home, 0o755);
+  fs.chmodSync(path.join(home, ".config"), 0o700);
+  fs.chmodSync(path.dirname(configPath), 0o700);
+
+  const result = applySharedGatewayPermissions(configPath, home);
+  const homeEntry = result.applied.find((entry) => entry.path === home);
+
+  assert.equal(homeEntry?.changed, false);
+  assert.equal(fs.statSync(home).mode & 0o777, 0o755);
+  assert.equal(fs.statSync(path.dirname(configPath)).mode & 0o777, 0o711);
+});
+
+test("add rejects non-interactive arguments", () => {
+  const { parseArgv } = require(path.join(ROOT, "dist", "cli"));
+
+  assert.throws(
+    () => parseArgv(["add", "--port", "1901", "jupyter"]),
+    /Unknown option|interactive only/
+  );
+  assert.throws(() => parseArgv(["add", "jupyter"]), /interactive only/);
+  assert.equal(parseArgv(["add"]).command, "add");
 });
 
 test("proxy forwarded headers for subpath apps", () => {
@@ -212,6 +292,51 @@ test("proxy forwarded headers for subpath apps", () => {
   assert.equal(headers["x-forwarded-for"], "203.0.113.1, 10.0.0.5");
   assert.equal(headers["x-forwarded-prefix"], "/proxy/alice/annovibe");
   assert.equal(headers["x-forwarded-host"], "lab.example.com:1907");
+});
+
+test("stop command stops running daemon", async () => {
+  const tmp = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "multiprox-stop-"));
+  const stateDir = path.join(tmp, "state");
+  const statePath = path.join(stateDir, "state.yaml");
+  const pidPath = path.join(stateDir, "daemon.pid");
+  const port = 30442;
+
+  fs.mkdirSync(stateDir, { recursive: true });
+  const yaml = require("js-yaml");
+  fs.writeFileSync(
+    statePath,
+    yaml.dump({
+      server: { host: "127.0.0.1", port },
+      auth: { session_secret: "stop-test-secret", session_ttl: 3600 },
+      users: { home_prefix: tmp, scan_homes: false },
+    })
+  );
+
+  const daemon = runNode(["-s", statePath, "--host", "127.0.0.1", "--port", String(port)]);
+  const daemonExit = new Promise((resolve) => {
+    if (daemon.exitCode !== null) {
+      resolve(daemon.exitCode);
+      return;
+    }
+    daemon.on("exit", resolve);
+  });
+
+  await waitForLog(daemon, /listening on http:\/\/127\.0\.0\.1:/);
+  assert.equal(fs.existsSync(pidPath), true);
+
+  const stop = runNode(["stop", "-s", statePath]);
+  const stopExit = new Promise((resolve) => {
+    if (stop.exitCode !== null) {
+      resolve(stop.exitCode);
+      return;
+    }
+    stop.on("exit", resolve);
+  });
+
+  const [stopCode, daemonCode] = await Promise.all([stopExit, daemonExit]);
+  assert.equal(stopCode, 0);
+  assert.equal(daemonCode, 0);
+  assert.equal(fs.existsSync(pidPath), false);
 });
 
 test("layout helpers reorder and categorize", () => {

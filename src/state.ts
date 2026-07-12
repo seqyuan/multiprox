@@ -122,4 +122,29 @@ export function applyStateOverrides(
   };
 }
 
+export function persistServerConfig(
+  statePath: string,
+  host?: string,
+  port?: number
+): void {
+  if (host === undefined && port === undefined) {
+    return;
+  }
+
+  ensureStateExists(statePath);
+  const content = fs.readFileSync(statePath, "utf8");
+  const raw = (yaml.load(content) as Record<string, unknown>) ?? {};
+  const server = (raw.server as Record<string, unknown> | undefined) ?? {};
+
+  if (host !== undefined) server.host = host;
+  if (port !== undefined) server.port = port;
+  raw.server = server;
+
+  fs.writeFileSync(
+    statePath,
+    yaml.dump(raw, { lineWidth: -1, noRefs: true }),
+    "utf8"
+  );
+}
+
 export { getDefaultStatePath };

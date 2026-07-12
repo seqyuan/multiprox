@@ -67,6 +67,11 @@ export function getDefaultStatePath(): string {
   return path.join(base, "multiprox", "state.yaml");
 }
 
+export function getPidPath(statePath?: string): string {
+  const resolved = statePath ?? getDefaultStatePath();
+  return path.join(path.dirname(resolved), "daemon.pid");
+}
+
 export function getUserHome(username: string): string {
   if (username === os.userInfo().username) {
     return os.homedir();

@@ -2,21 +2,23 @@
 
 import * as path from "path";
 import { runServer } from "./server";
+import { runStop } from "./daemon";
 import { runPasswd } from "./passwd";
 import { runAdd, runList, runRemove } from "./services-cli";
 import { runLayout } from "./layout-cli";
 import { getDefaultStatePath } from "./paths";
 import { DaemonOptions } from "./options";
 
-type Command = "serve" | "passwd" | "add" | "list" | "remove" | "layout";
+type Command = "serve" | "stop" | "passwd" | "add" | "list" | "remove" | "layout";
 
 function printHelp(): void {
   console.log(`MultiProx — 多服务认证反向代理入口（共享网关）
 
 用法:
   multiprox [选项]                         启动共享网关 daemon
-  multiprox passwd [选项]                  设置当前用户登录密码
-  multiprox add [选项] [name] [description]     添加端口转发（无必填参数时进入交互）
+  multiprox stop [选项]                    停止后台运行的 daemon
+  multiprox passwd [选项]                  设置密码并修复共享网关目录权限
+  multiprox add [选项]                         交互式添加端口转发
   multiprox list [选项]                    列出当前用户转发
   multiprox remove <name> [选项]           删除转发
   multiprox layout [选项]                  终端交互式排序与分类
@@ -30,21 +32,15 @@ Daemon 选项:
 用户命令选项:
   -c, --config <path>   用户配置文件 (默认: ~/.config/multiprox/config.yaml)
 
-add 选项:
-  --host <host>         后端地址 (默认: 127.0.0.1，允许内网地址)
-  --port <port>         后端端口 (必填)
-  --category <name>     分类名称
-  --ws                  启用 WebSocket
-
 说明:
-  name 会自动生成代理路径，如 "jupyter" -> /jupyter
-  直接运行 multiprox add 可逐项填写；带齐 --port 与 name 时仍支持一行命令
+  multiprox add 为纯交互式，逐项填写名称、端口、分类等
 
 示例:
   multiprox
+  multiprox --port 1908
+  multiprox stop
   multiprox passwd
   multiprox add
-  multiprox add --port 1901 --category 开发工具 jupyter 交互式笔记本
   multiprox layout
   multiprox list
   multiprox remove jupyter
@@ -59,7 +55,7 @@ function parsePort(value: string): number {
   return port;
 }
 
-const COMMANDS = new Set<Command>(["passwd", "add", "list", "remove", "layout"]);
+const COMMANDS = new Set<Command>(["stop", "passwd", "add", "list", "remove", "layout"]);
 
 function findCommand(argv: string[]): { command: Command; rest: string[] } {
   for (let i = 0; i < argv.length; i++) {
@@ -126,10 +122,14 @@ export function parseArgv(argv: string[]): {
       continue;
     }
 
-    positional.push(arg);
-    if (["--name", "--path", "--host", "--port", "--category"].includes(arg)) {
-      positional.push(rest[++i]);
+    if (command === "add") {
+      if (arg.startsWith("-")) {
+        throw new Error(`Unknown option: ${arg}`);
+      }
+      throw new Error("multiprox add is interactive only; run: multiprox add");
     }
+
+    positional.push(arg);
   }
 
   return {
@@ -164,12 +164,17 @@ async function main(): Promise<void> {
     case "layout":
       await runLayout(userConfigPath);
       return;
+    case "stop":
+      await runStop(daemon);
+      return;
     default:
       await runServer(daemon);
   }
 }
 
-main().catch((err: Error) => {
-  console.error(`[multiprox] fatal: ${err.message}`);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((err: Error) => {
+    console.error(`[multiprox] fatal: ${err.message}`);
+    process.exit(1);
+  });
+}
