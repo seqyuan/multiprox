@@ -378,3 +378,50 @@ export function removeService(configPath: string, id: string): void {
     });
   });
 }
+
+export interface UpdateServiceInput {
+  name?: string;
+  description?: string;
+  host?: string;
+  port?: number;
+  websocket?: boolean;
+  category?: string;
+}
+
+export function updateService(configPath: string, id: string, input: UpdateServiceInput): void {
+  withConfigLock(configPath, () => {
+    const config = loadUserConfig(configPath);
+    const svc = config.services.find((s) => s.id === id);
+    if (!svc) {
+      throw new Error(`Service not found: ${id}`);
+    }
+
+    if (input.name !== undefined && input.name.trim().length > 0) {
+      svc.name = input.name.trim();
+    }
+    if (input.description !== undefined) {
+      svc.description = input.description.trim() || undefined;
+    }
+    if (input.host !== undefined && input.host.trim().length > 0) {
+      assertAllowedHost(input.host.trim());
+      svc.host = input.host.trim();
+    }
+    if (input.port !== undefined) {
+      if (!Number.isFinite(input.port) || input.port < 1 || input.port > 65535) {
+        throw new Error("port must be between 1 and 65535");
+      }
+      svc.port = input.port;
+    }
+    if (input.websocket !== undefined) {
+      svc.websocket = input.websocket;
+    }
+    if (input.category !== undefined) {
+      svc.category = input.category.trim() || undefined;
+    }
+
+    saveRawConfig(configPath, {
+      auth: { password_hash: config.auth.password_hash },
+      services: config.services,
+    });
+  });
+}

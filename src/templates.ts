@@ -295,14 +295,18 @@ export function dashboardPage(
     user-select: none;
     padding: 0.2rem 0.35rem;
   }
-  .card-delete {
+  .card-actions { display: flex; gap: 0.15rem; }
+  .card-edit, .card-delete {
     background: transparent;
     border: none;
-    color: var(--danger);
-    font-size: 1.2rem;
+    font-size: 1.05rem;
     line-height: 1;
     padding: 0.2rem 0.45rem;
+    cursor: pointer;
   }
+  .card-edit { color: var(--accent); }
+  .card-edit:hover { opacity: 0.8; }
+  .card-delete { color: var(--danger); }
   .card-delete:hover { opacity: 0.8; }
   .card-link {
     display: flex;
@@ -406,6 +410,7 @@ export function dashboardPage(
   }
   .toast.show { display: block; }
   .read-only .drag-handle,
+  .read-only .card-edit,
   .read-only .card-delete,
   .read-only .fab-add { display: none; }
 </style>
@@ -446,6 +451,30 @@ ${writable ? '<button type="button" class="fab-add" id="fab-add" title="添加�
     </div>
   </form>
 </div>
+<div class="modal-backdrop" id="edit-modal">
+  <form class="modal" id="edit-form">
+    <h2>编辑端口转发</h2>
+    <input type="hidden" id="edit-id" value="">
+    <label for="edit-name">名称</label>
+    <input id="edit-name" name="name" type="text" required>
+    <label for="edit-description">说明</label>
+    <input id="edit-description" name="description" type="text">
+    <label for="edit-host">后端地址</label>
+    <input id="edit-host" name="host" type="text" required>
+    <label for="edit-port">端口</label>
+    <input id="edit-port" name="port" type="number" min="1" max="65535" required>
+    <label for="edit-category">分类</label>
+    <input id="edit-category" name="category" type="text">
+    <label class="checkbox-row">
+      <input id="edit-ws" name="websocket" type="checkbox">
+      <span>启用 WebSocket</span>
+    </label>
+    <div class="modal-actions">
+      <button type="button" class="btn-secondary" id="edit-cancel">取消</button>
+      <button type="submit" class="btn-primary">保存</button>
+    </div>
+  </form>
+</div>
 <div class="toast" id="toast"></div>
 <script>window.__MULTIPROX_BOOT__ = ${boot};</script>
 <script>${DASHBOARD_SCRIPT}</script>`;
@@ -483,7 +512,10 @@ function renderServiceCard(username: string, s: ServiceConfig, writable: boolean
   const toolbar = writable
     ? `<div class="card-toolbar">
         <span class="drag-handle" draggable="true" data-drag-handle="1" title="拖动排序">⋮⋮</span>
-        <button type="button" class="card-delete" data-delete-id="${escapeHtml(s.id)}" title="删除">×</button>
+        <div class="card-actions">
+          <button type="button" class="card-edit" data-edit-id="${escapeHtml(s.id)}" title="编辑">✎</button>
+          <button type="button" class="card-delete" data-delete-id="${escapeHtml(s.id)}" title="删除">×</button>
+        </div>
       </div>`
     : "";
 
@@ -566,7 +598,7 @@ const DASHBOARD_SCRIPT = `
     var desc = s.description ? '<p class="card-desc">' + esc(s.description) + '</p>' : '';
     var ws = s.websocket ? '<span class="badge ws">WebSocket</span>' : '';
     var toolbar = state.writable
-      ? '<div class="card-toolbar"><span class="drag-handle" draggable="true" data-drag-handle="1" title="拖动排序">⋮⋮</span><button type="button" class="card-delete" data-delete-id="' + esc(s.id) + '" title="删除">×</button></div>'
+      ? '<div class="card-toolbar"><span class="drag-handle" draggable="true" data-drag-handle="1" title="拖动排序">⋮⋮</span><div class="card-actions"><button type="button" class="card-edit" data-edit-id="' + esc(s.id) + '" title="编辑">✎</button><button type="button" class="card-delete" data-delete-id="' + esc(s.id) + '" title="删除">×</button></div></div>'
       : '';
     return '<div class="service-card" data-id="' + esc(s.id) + '" data-category="' + esc(s.category || "未分类") + '">' +
       toolbar +
@@ -610,6 +642,18 @@ const DASHBOARD_SCRIPT = `
 
   function bindInteractions() {
     if (!state.writable) return;
+
+    $$(".card-edit", $("#dashboard")).forEach(function(btn) {
+      btn.addEventListener("click", function(ev) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        var id = btn.getAttribute("data-edit-id");
+        if (!id) return;
+        var svc = state.services.find(function(s) { return s.id === id; });
+        if (!svc) return;
+        openEditModal(svc);
+      });
+    });
 
     $$(".card-delete", $("#dashboard")).forEach(function(btn) {
       btn.addEventListener("click", function(ev) {
@@ -704,6 +748,51 @@ const DASHBOARD_SCRIPT = `
         $("#add-host").value = "127.0.0.1";
         renderDashboard();
         showToast("已添加");
+      }).catch(function(err) { showToast(err.message); });
+    });
+  }
+
+  function openEditModal(svc) {
+    $("#edit-id").value = svc.id;
+    $("#edit-name").value = svc.name || "";
+    $("#edit-description").value = svc.description || "";
+    $("#edit-host").value = svc.host || "127.0.0.1";
+    $("#edit-port").value = svc.port;
+    $("#edit-category").value = svc.category || "";
+    $("#edit-ws").checked = !!svc.websocket;
+    $("#edit-modal").classList.add("open");
+    $("#edit-name").focus();
+  }
+
+  var editModal = $("#edit-modal");
+  var editForm = $("#edit-form");
+  var editCancel = $("#edit-cancel");
+  if (editCancel) {
+    editCancel.addEventListener("click", function() { editModal.classList.remove("open"); });
+  }
+  if (editForm) {
+    editForm.addEventListener("submit", function(ev) {
+      ev.preventDefault();
+      var id = $("#edit-id").value;
+      var payload = {};
+      var name = $("#edit-name").value.trim();
+      if (name) payload.name = name;
+      payload.description = $("#edit-description").value.trim();
+      payload.host = $("#edit-host").value.trim() || "127.0.0.1";
+      payload.port = parseInt($("#edit-port").value, 10);
+      payload.category = $("#edit-category").value.trim();
+      payload.websocket = $("#edit-ws").checked;
+
+      api("/api/services/" + encodeURIComponent(id), {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      }).then(function(data) {
+        var idx = state.services.findIndex(function(s) { return s.id === id; });
+        if (idx >= 0 && data.service) state.services[idx] = data.service;
+        editModal.classList.remove("open");
+        renderDashboard();
+        showToast("已保存");
       }).catch(function(err) { showToast(err.message); });
     });
   }

@@ -5,6 +5,7 @@ import { getSessionFromCookies } from "./auth";
 import {
   addService,
   removeService,
+  updateService,
   updateServicesLayout,
   ServiceConfig,
   ServiceLayoutItem,
@@ -192,6 +193,73 @@ async function handleUpdateLayout(
   }
 }
 
+function parseUpdateBody(raw: unknown): {
+  name?: string;
+  description?: string;
+  host?: string;
+  port?: number;
+  websocket?: boolean;
+  category?: string;
+} {
+  if (!raw || typeof raw !== "object") {
+    throw new Error("Invalid JSON body");
+  }
+  const body = raw as Record<string, unknown>;
+
+  const result: ReturnType<typeof parseUpdateBody> = {};
+
+  if (typeof body.name === "string" && body.name.trim()) {
+    result.name = body.name.trim();
+  }
+  if (typeof body.description === "string") {
+    result.description = body.description.trim();
+  }
+  if (typeof body.host === "string" && body.host.trim()) {
+    assertAllowedHost(body.host.trim());
+    result.host = body.host.trim();
+  }
+  if (typeof body.port === "number" || typeof body.port === "string") {
+    result.port = parsePort(body.port);
+  }
+  if (typeof body.websocket === "boolean") {
+    result.websocket = body.websocket;
+  }
+  if (typeof body.category === "string") {
+    result.category = body.category.trim() || undefined;
+  }
+
+  return result;
+}
+
+async function handleUpdateService(
+  req: IncomingMessage,
+  res: ServerResponse,
+  registry: UserRegistry,
+  username: string,
+  serviceId: string
+): Promise<void> {
+  const configPath = getConfigPath(registry, username);
+  if (!configPath) {
+    sendJson(res, 404, { error: "User config not found" });
+    return;
+  }
+  if (!canWriteConfig(configPath)) {
+    rejectNotWritable(res);
+    return;
+  }
+
+  try {
+    const body = parseUpdateBody(JSON.parse(await readBody(req)));
+    updateService(configPath, serviceId, body);
+    registry.reload();
+    const user = registry.getUser(username);
+    const updated = user?.config.services.find((s) => s.id === serviceId);
+    sendJson(res, 200, { service: updated });
+  } catch (err) {
+    sendJson(res, 400, { error: mapConfigWriteError(err) });
+  }
+}
+
 function handleDeleteService(
   res: ServerResponse,
   registry: UserRegistry,
@@ -251,9 +319,13 @@ export async function handleApi(
     return true;
   }
 
-  const deleteMatch = pathname.match(/^\/api\/services\/([^/]+)$/);
-  if (deleteMatch && req.method === "DELETE") {
-    handleDeleteService(res, registry, username, decodeURIComponent(deleteMatch[1]));
+  const serviceIdMatch = pathname.match(/^\/api\/services\/([^/]+)$/);
+  if (serviceIdMatch && req.method === "DELETE") {
+    handleDeleteService(res, registry, username, decodeURIComponent(serviceIdMatch[1]));
+    return true;
+  }
+  if (serviceIdMatch && req.method === "PUT") {
+    await handleUpdateService(req, res, registry, username, decodeURIComponent(serviceIdMatch[1]));
     return true;
   }
 
