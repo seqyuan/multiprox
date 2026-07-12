@@ -166,7 +166,20 @@ export function proxyHttp(
   const proxyReq = http.request(options, (proxyRes) => {
     const resHeaders = { ...proxyRes.headers };
     delete resHeaders["transfer-encoding"];
-    res.writeHead(proxyRes.statusCode ?? 502, resHeaders);
+
+    // Rewrite redirect Location: bare path → proxy-prefixed path
+    const status = proxyRes.statusCode ?? 502;
+    if (
+      status >= 300 && status < 400 &&
+      typeof resHeaders["location"] === "string"
+    ) {
+      const loc = resHeaders["location"] as string;
+      if (loc.startsWith("/") && !loc.startsWith("/proxy/")) {
+        resHeaders["location"] = forward.prefix + loc;
+      }
+    }
+
+    res.writeHead(status, resHeaders);
     proxyRes.pipe(res);
   });
 
