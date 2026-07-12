@@ -132,7 +132,11 @@ function createHandler(
       }
 
       const query = url.search || "";
-      const proxiedPath = match.remainingPath + query;
+      // Preserve service.path so the backend sees e.g. /lab/tree
+      // instead of bare /.  Combined with the catch-all redirect below,
+      // this matches auth_jupyter_proxy.py behaviour: the backend's
+      // internal redirects (e.g. /lab) work end-to-end.
+      const proxiedPath = match.service.path + match.remainingPath + query;
       const forward = buildProxyForwardContext(
         req,
         match.username,
@@ -162,6 +166,41 @@ function createHandler(
         sendHtml(res, 200, loginPage());
       }
       return;
+    }
+
+    // Catch-all: redirect bare paths to /proxy/{username}{servicePath}...
+    // so that apps issuing absolute redirects (e.g. /lab) are rewritten
+    if (req.method === "GET" && pathname !== "/") {
+      const session = getSession(req, sessionSecret);
+      if (session.valid && session.userId) {
+        const user = registry.getUser(session.userId);
+        if (user) {
+          let bestService: typeof user.config.services[0] | null = null;
+          let bestLen = -1;
+          for (const svc of user.config.services) {
+            const sp = svc.path;
+            if (
+              pathname === sp ||
+              pathname.startsWith(sp + "/") ||
+              (pathname.startsWith(sp) && pathname[sp.length] === "?")
+            ) {
+              if (sp.length > bestLen) {
+                bestLen = sp.length;
+                bestService = svc;
+              }
+            }
+          }
+          if (bestService) {
+            const rest = pathname.slice(bestService.path.length);
+            const query = url.search || "";
+            res.writeHead(302, {
+              Location: `/proxy/${session.userId}${bestService.path}${rest}${query}`,
+            });
+            res.end();
+            return;
+          }
+        }
+      }
     }
 
     sendHtml(res, 404, notFoundPage());
@@ -210,7 +249,7 @@ function createUpgradeHandler(registry: UserRegistry, sessionSecret: string) {
     }
 
     const query = url.search || "";
-    const proxiedPath = match.remainingPath + query;
+    const proxiedPath = match.service.path + match.remainingPath + query;
     proxyWebSocket(req, socket, head, match.service, proxiedPath);
   };
 }
