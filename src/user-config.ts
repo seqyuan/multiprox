@@ -1,4 +1,6 @@
+import * as crypto from "crypto";
 import * as fs from "fs";
+import * as os from "os";
 import * as path from "path";
 import yaml from "js-yaml";
 import { assertAllowedHost } from "./paths";
@@ -189,8 +191,15 @@ function loadRawConfig(configPath: string): Record<string, unknown> {
 
 function saveRawConfig(configPath: string, raw: Record<string, unknown>): void {
   const resolved = path.resolve(configPath);
+  const existed = fs.existsSync(resolved);
   fs.mkdirSync(path.dirname(resolved), { recursive: true });
   const content = yaml.dump(raw, { lineWidth: -1, noRefs: true });
+
+  if (existed) {
+    fs.writeFileSync(resolved, content, "utf8");
+    return;
+  }
+
   fs.writeFileSync(resolved, content, { mode: USER_CONFIG_FILE_MODE });
   try {
     fs.chmodSync(resolved, USER_CONFIG_FILE_MODE);
@@ -228,10 +237,17 @@ export function updatePasswordHash(configPath: string, passwordHash: string): vo
   saveRawConfig(configPath, raw);
 }
 
+function getConfigLockPath(configPath: string): string {
+  const resolved = path.resolve(configPath);
+  const hash = crypto.createHash("sha256").update(resolved).digest("hex");
+  const lockDir = path.join(os.tmpdir(), "multiprox-locks");
+  return path.join(lockDir, `${hash}.lock`);
+}
+
 export function withConfigLock<T>(configPath: string, fn: () => T): T {
   const resolved = path.resolve(configPath);
-  const lockPath = `${resolved}.lock`;
-  fs.mkdirSync(path.dirname(resolved), { recursive: true });
+  const lockPath = getConfigLockPath(resolved);
+  fs.mkdirSync(path.dirname(lockPath), { recursive: true });
 
   const start = Date.now();
   while (true) {

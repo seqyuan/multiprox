@@ -310,6 +310,39 @@ test("shouldApplySharedGatewayPermissions applies when only stale current-user s
   assert.equal(shouldApplySharedGatewayPermissions(configPath, statePath), true);
 });
 
+test("config writes preserve shared mode and do not create adjacent lock", () => {
+  const { addService } = require(path.join(ROOT, "dist", "user-config"));
+  const tmp = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "multiprox-lock-"));
+  const configPath = path.join(tmp, "user", ".config", "multiprox", "config.yaml");
+
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  const { hashPassword } = require(path.join(ROOT, "dist", "auth"));
+  fs.writeFileSync(
+    configPath,
+    [
+      "auth:",
+      `  password_hash: ${hashPassword("pass123")}`,
+      "services: []",
+      "",
+    ].join("\n"),
+    { mode: 0o666 }
+  );
+  fs.chmodSync(configPath, 0o666);
+  fs.chmodSync(path.dirname(configPath), 0o711);
+
+  addService(configPath, {
+    id: "svc",
+    name: "Svc",
+    host: "127.0.0.1",
+    port: 18001,
+    path: "/svc",
+    websocket: true,
+  });
+
+  assert.equal(fs.existsSync(`${configPath}.lock`), false);
+  assert.equal(fs.statSync(configPath).mode & 0o777, 0o666);
+});
+
 test("applySharedGatewayPermissions keeps permissive home unchanged", () => {
   const { applySharedGatewayPermissions } = require(path.join(ROOT, "dist", "config-perms"));
   const tmp = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "multiprox-perm2-"));
