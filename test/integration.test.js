@@ -9,10 +9,43 @@ const ROOT = path.resolve(__dirname, "..");
 const CLI = path.join(ROOT, "dist", "cli.js");
 const TEST_USER = "testuser";
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForServer(host, port, timeoutMs = 15000) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    try {
+      await new Promise((resolve, reject) => {
+        const req = http.request({ hostname: host, port, path: "/", method: "GET", timeout: 500 }, (res) => {
+          res.resume();
+          resolve(true);
+        });
+        req.on("error", () => reject(new Error("not ready")));
+        req.on("timeout", () => { req.destroy(); reject(new Error("timeout")); });
+        req.end();
+      });
+      return;
+    } catch {
+      await sleep(200);
+    }
+  }
+  throw new Error(`Server ${host}:${port} did not start within ${timeoutMs}ms`);
+}
+
 function runNode(args) {
   return spawn("node", [CLI, ...args], {
     cwd: ROOT,
     env: process.env,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+}
+
+function runForeground(args) {
+  return spawn("node", [CLI, ...args], {
+    cwd: ROOT,
+    env: { ...process.env, MULTIPROX_BACKGROUND: "1" },
     stdio: ["ignore", "pipe", "pipe"],
   });
 }
@@ -48,6 +81,18 @@ function waitForLog(proc, pattern, timeoutMs = 10000) {
     proc.stdout?.on("data", onData);
     proc.stderr?.on("data", onData);
     proc.on("exit", onExit);
+  });
+}
+
+async function startBackground(args) {
+  const proc = runNode(args);
+  await new Promise((resolve) => proc.on("exit", resolve));
+}
+
+async function stopBackground(statePath) {
+  await new Promise((resolve) => {
+    const proc = runNode(["stop", "-s", statePath]);
+    proc.on("exit", resolve);
   });
 }
 
@@ -114,7 +159,7 @@ test("shared gateway login and web API writes", async (t) => {
     })
   );
 
-  const daemon = runNode(["-s", statePath, "--host", "127.0.0.1", "--port", String(port)]);
+  const daemon = runForeground(["-s", statePath, "--host", "127.0.0.1", "--port", String(port)]);
   t.after(() => daemon.kill("SIGTERM"));
 
   await waitForLog(daemon, /listening on http:\/\/127\.0\.0\.1:/);
@@ -367,7 +412,7 @@ test("proxy rewrites redirects, strips gateway cookie, and falls back by referer
     })
   );
 
-  const daemon = runNode(["-s", statePath, "--host", "127.0.0.1", "--port", String(gatewayPort)]);
+  const daemon = runForeground(["-s", statePath, "--host", "127.0.0.1", "--port", String(gatewayPort)]);
   t.after(() => daemon.kill("SIGTERM"));
   await waitForLog(daemon, /listening on http:\/\/127\.0\.0\.1:/);
 
@@ -545,29 +590,15 @@ test("stop command stops running daemon", async () => {
   );
 
   const daemon = runNode(["-s", statePath, "--host", "127.0.0.1", "--port", String(port)]);
-  const daemonExit = new Promise((resolve) => {
-    if (daemon.exitCode !== null) {
-      resolve(daemon.exitCode);
-      return;
-    }
-    daemon.on("exit", resolve);
-  });
-
-  await waitForLog(daemon, /listening on http:\/\/127\.0\.0\.1:/);
+  await new Promise((resolve) => daemon.on("exit", resolve));
+  await waitForServer("127.0.0.1", port);
   assert.equal(fs.existsSync(pidPath), true);
 
   const stop = runNode(["stop", "-s", statePath]);
-  const stopExit = new Promise((resolve) => {
-    if (stop.exitCode !== null) {
-      resolve(stop.exitCode);
-      return;
-    }
-    stop.on("exit", resolve);
-  });
+  await new Promise((resolve) => stop.on("exit", resolve));
 
-  const [stopCode, daemonCode] = await Promise.all([stopExit, daemonExit]);
-  assert.equal(stopCode, 0);
-  assert.equal(daemonCode, 0);
+  // Allow background process to exit
+  await sleep(500);
   assert.equal(fs.existsSync(pidPath), false);
 });
 

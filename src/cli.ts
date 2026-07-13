@@ -2,7 +2,7 @@
 
 import * as path from "path";
 import { runServer } from "./server";
-import { runStop } from "./daemon";
+import { runStop, runBackground, printStatus, printLogs } from "./daemon";
 import { runPasswd } from "./passwd";
 import { runAdd, runList, runRemove } from "./services-cli";
 import { runLayout } from "./layout-cli";
@@ -12,14 +12,16 @@ import pkg from "../package.json";
 
 const VERSION = pkg.version;
 
-type Command = "serve" | "stop" | "passwd" | "add" | "list" | "remove" | "layout";
+type Command = "serve" | "stop" | "passwd" | "add" | "list" | "remove" | "layout" | "status" | "logs";
 
 function printHelp(): void {
   console.log(`MultiProx v${VERSION} — 多服务认证反向代理入口（共享网关）
 
 用法:
-  multiprox [选项]                         启动共享网关 daemon
+  multiprox [选项]                         后台启动共享网关 daemon
   multiprox stop [选项]                    停止后台运行的 daemon
+  multiprox status [选项]                  查看 daemon 运行状态
+  multiprox logs [-f] [选项]               查看 daemon 日志
   multiprox passwd [选项]                  设置密码并修复共享网关目录权限
   multiprox add [选项]                         交互式添加端口转发
   multiprox list [选项]                    列出当前用户转发
@@ -42,6 +44,9 @@ Daemon 选项:
   multiprox
   multiprox --port 1908
   multiprox stop
+  multiprox status
+  multiprox logs
+  multiprox logs -f
   multiprox passwd
   multiprox add
   multiprox layout
@@ -58,7 +63,7 @@ function parsePort(value: string): number {
   return port;
 }
 
-const COMMANDS = new Set<Command>(["stop", "passwd", "add", "list", "remove", "layout"]);
+const COMMANDS = new Set<Command>(["stop", "passwd", "add", "list", "remove", "layout", "status", "logs"]);
 
 function findCommand(argv: string[]): { command: Command; rest: string[] } {
   for (let i = 0; i < argv.length; i++) {
@@ -170,8 +175,18 @@ async function main(): Promise<void> {
     case "stop":
       await runStop(daemon);
       return;
+    case "status":
+      printStatus(daemon.statePath);
+      return;
+    case "logs":
+      printLogs(daemon.statePath, false);
+      return;
     default:
-      await runServer(daemon);
+      if (process.env.MULTIPROX_BACKGROUND === "1") {
+        await runServer(daemon);
+      } else {
+        await runBackground(daemon, __filename);
+      }
   }
 }
 

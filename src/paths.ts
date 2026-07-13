@@ -72,6 +72,11 @@ export function getPidPath(statePath?: string): string {
   return path.join(path.dirname(resolved), "daemon.pid");
 }
 
+export function getLogPath(statePath?: string): string {
+  const resolved = statePath ?? getDefaultStatePath();
+  return path.join(path.dirname(resolved), "multiprox.log");
+}
+
 export function getUserHome(username: string): string {
   if (username === os.userInfo().username) {
     return os.homedir();
