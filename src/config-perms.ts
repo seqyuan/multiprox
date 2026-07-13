@@ -101,18 +101,10 @@ function getProcessUid(pid: number): number | null {
 
 export function getGatewayOperatorUid(statePath: string = getDefaultStatePath()): number | null {
   const pid = getRunningPid(statePath);
-  if (pid) {
-    const uid = getProcessUid(pid);
-    if (uid !== null) {
-      return uid;
-    }
-  }
-
-  try {
-    return fs.statSync(statePath).uid;
-  } catch {
+  if (!pid) {
     return null;
   }
+  return getProcessUid(pid);
 }
 
 export function shouldApplySharedGatewayPermissions(

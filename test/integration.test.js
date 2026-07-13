@@ -269,9 +269,34 @@ test("applySharedGatewayPermissions fixes traverse and config readability", () =
   assert.equal(fs.statSync(configPath).mode & 0o777, 0o666);
 });
 
-test("shouldApplySharedGatewayPermissions skips when gateway operator is current user", () => {
+test("shouldApplySharedGatewayPermissions skips when gateway operator is current user", async (t) => {
   const { shouldApplySharedGatewayPermissions } = require(path.join(ROOT, "dist", "config-perms"));
-  const tmp = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "multiprox-perm3-"));
+  const tmp = fs.mkdtempSync(path.join(require("node:os").homedir(), ".multiprox-perm3-"));
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  const home = path.join(tmp, "ops");
+  const stateDir = path.join(tmp, "state");
+  const statePath = path.join(stateDir, "state.yaml");
+  const pidPath = path.join(stateDir, "daemon.pid");
+  const configPath = path.join(home, ".config", "multiprox", "config.yaml");
+
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(configPath, "auth: {}\n", { mode: 0o600 });
+  fs.mkdirSync(stateDir, { recursive: true });
+  fs.writeFileSync(statePath, "server: { host: 127.0.0.1, port: 1 }\n");
+
+  const sleeper = spawn(process.execPath, ["-e", "setTimeout(() => {}, 30000)"], {
+    stdio: "ignore",
+  });
+  t.after(() => sleeper.kill("SIGTERM"));
+  fs.writeFileSync(pidPath, `${sleeper.pid}\n`);
+
+  assert.equal(shouldApplySharedGatewayPermissions(configPath, statePath), false);
+});
+
+test("shouldApplySharedGatewayPermissions applies when only stale current-user state exists", (t) => {
+  const { shouldApplySharedGatewayPermissions } = require(path.join(ROOT, "dist", "config-perms"));
+  const tmp = fs.mkdtempSync(path.join(require("node:os").homedir(), ".multiprox-perm-stale-"));
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
   const home = path.join(tmp, "ops");
   const stateDir = path.join(tmp, "state");
   const statePath = path.join(stateDir, "state.yaml");
@@ -282,10 +307,7 @@ test("shouldApplySharedGatewayPermissions skips when gateway operator is current
   fs.mkdirSync(stateDir, { recursive: true });
   fs.writeFileSync(statePath, "server: { host: 127.0.0.1, port: 1 }\n");
 
-  const uid = fs.statSync(home).uid;
-  fs.chownSync(statePath, uid, fs.statSync(statePath).gid);
-
-  assert.equal(shouldApplySharedGatewayPermissions(configPath, statePath), false);
+  assert.equal(shouldApplySharedGatewayPermissions(configPath, statePath), true);
 });
 
 test("applySharedGatewayPermissions keeps permissive home unchanged", () => {
