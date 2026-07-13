@@ -1,6 +1,6 @@
 {
   "name": "@seqyuan/multiprox",
-  "version": "1.1.13",
+  "version": "1.1.14",
   "description": "Multi-service authenticated reverse proxy hub",
   "main": "dist/server.js",
   "bin": {

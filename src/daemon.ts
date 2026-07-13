@@ -1,5 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
+import * as os from "os";
 import * as http from "http";
 import * as child_process from "child_process";
 import { DaemonOptions } from "./options";
@@ -50,6 +51,20 @@ export function getRunningPid(statePath?: string): number | null {
     return null;
   }
   return pid;
+}
+
+function getLocalIP(): string {
+  const ifaces = os.networkInterfaces();
+  for (const name of Object.keys(ifaces)) {
+    const iface = ifaces[name];
+    if (!iface) continue;
+    for (const addr of iface) {
+      if (addr.family === "IPv4" && !addr.internal) {
+        return addr.address;
+      }
+    }
+  }
+  return "127.0.0.1";
 }
 
 export function setupDaemonShutdown(server: http.Server, pidPath: string): void {
@@ -138,7 +153,10 @@ export async function runBackground(options: DaemonOptions, cliPath: string): Pr
   }
 
   writePidFile(pidPath, child.pid);
+  const host = options.host ?? "0.0.0.0";
+  const displayHost = host === "0.0.0.0" || host === "::" ? getLocalIP() : host;
   console.log(`[multiprox] started (pid ${child.pid})`);
+  console.log(`[multiprox] listening on http://${displayHost}:${options.port ?? 1907}`);
   console.log(`[multiprox] log: ${logPath}`);
 }
 
@@ -153,6 +171,17 @@ export function printStatus(statePath?: string): void {
     console.log("[multiprox] not running");
   }
   console.log(`[multiprox] log: ${logPath}`);
+  if (pid) {
+    try {
+      const { loadState } = require("./state");
+      const state = loadState(resolved);
+      const host = state.server.host ?? "0.0.0.0";
+      const displayHost = host === "0.0.0.0" || host === "::" ? getLocalIP() : host;
+      console.log(`[multiprox] listening on http://${displayHost}:${state.server.port}`);
+    } catch {
+      // ignore state read errors
+    }
+  }
 }
 
 export function printLogs(statePath?: string, follow = false): void {
