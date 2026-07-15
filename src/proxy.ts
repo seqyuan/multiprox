@@ -32,8 +32,6 @@ export function proxyWebSocket(
     const reqLine = `${req.method} ${proxiedPath} HTTP/${req.httpVersion}\r\n`;
 
     const headers: string[] = [];
-    let forwardedConnectionUpgrade = false;
-    let forwardedUpgrade = false;
     for (const [key, value] of Object.entries(req.headers)) {
       const k = key.toLowerCase();
       if (k === "host") {
@@ -46,29 +44,13 @@ export function proxyWebSocket(
           const stripped = stripGatewayCookie(raw);
           if (stripped) headers.push(`${key}: ${stripped}`);
         }
-      } else if (k === "connection") {
-        headers.push("connection: Upgrade");
-        forwardedConnectionUpgrade = true;
-      } else if (k === "upgrade") {
-        forwardedUpgrade = true;
-        if (Array.isArray(value)) {
-          for (const v of value) headers.push(`${key}: ${v}`);
-        } else if (value !== undefined) {
-          headers.push(`${key}: ${value}`);
-        }
-      } else if (k !== "proxy-connection" && k !== "upgrade-insecure-requests") {
+      } else if (k !== "connection" && k !== "proxy-connection" && k !== "upgrade-insecure-requests") {
         if (Array.isArray(value)) {
           for (const v of value) headers.push(`${key}: ${v}`);
         } else if (value !== undefined) {
           headers.push(`${key}: ${value}`);
         }
       }
-    }
-    if (!forwardedConnectionUpgrade) {
-      headers.push("connection: Upgrade");
-    }
-    if (!forwardedUpgrade) {
-      headers.push("upgrade: websocket");
     }
 
     backendSocket.write(reqLine + headers.join("\r\n") + "\r\n\r\n");
