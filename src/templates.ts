@@ -524,7 +524,7 @@ function renderServiceCard(username: string, s: ServiceConfig, writable: boolean
   return `
   <div class="service-card" data-id="${escapeHtml(s.id)}" data-category="${escapeHtml(s.category || "未分类")}">
     ${toolbar}
-    <a class="card-link" href="${escapeHtml(proxyUrl)}">
+    <a class="card-link" href="${escapeHtml(proxyUrl)}" target="_blank" rel="noopener noreferrer">
       <div class="card-icon">🔗</div>
       <div class="card-body">
         <h2>${escapeHtml(s.name)}</h2>
@@ -604,7 +604,7 @@ const DASHBOARD_SCRIPT = `
       : '';
     return '<div class="service-card" data-id="' + esc(s.id) + '" data-category="' + esc(s.category || "未分类") + '">' +
       toolbar +
-      '<a class="card-link" href="' + esc(proxyUrl) + '"><div class="card-icon">🔗</div><div class="card-body"><h2>' + esc(s.name) + '</h2>' +
+      '<a class="card-link" href="' + esc(proxyUrl) + '" target="_blank" rel="noopener noreferrer"><div class="card-icon">🔗</div><div class="card-body"><h2>' + esc(s.name) + '</h2>' +
       desc + '<div class="card-meta"><span class="endpoint">' + esc(s.host) + ':' + s.port + '</span>' + ws + '</div></div></a></div>';
   }
 
