@@ -4,6 +4,7 @@ const { spawn } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 const http = require("node:http");
+const net = require("node:net");
 
 const ROOT = path.resolve(__dirname, "..");
 const CLI = path.join(ROOT, "dist", "cli.js");
@@ -112,6 +113,52 @@ function httpRequest(options, body) {
     req.on("error", reject);
     if (body) req.write(body);
     req.end();
+  });
+}
+
+function websocketHandshake({ port, path: requestPath, cookie, origin }) {
+  return new Promise((resolve, reject) => {
+    const socket = net.connect(port, "127.0.0.1", () => {
+      const headers = [
+        `GET ${requestPath} HTTP/1.1`,
+        `Host: 127.0.0.1:${port}`,
+        "Upgrade: websocket",
+        "Connection: Upgrade",
+        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==",
+        "Sec-WebSocket-Version: 13",
+      ];
+      if (origin) headers.push(`Origin: ${origin}`);
+      if (cookie) headers.push(`Cookie: ${cookie}`);
+      socket.write(headers.join("\r\n") + "\r\n\r\n");
+    });
+
+    let raw = "";
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      const statusLine = raw.split("\r\n")[0] || "";
+      const match = statusLine.match(/^HTTP\/\d\.\d\s+(\d+)/);
+      resolve({ status: match ? Number(match[1]) : 0, raw });
+    };
+
+    socket.setTimeout(5000, () => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      reject(new Error(`Timeout waiting for websocket response\n${raw}`));
+    });
+    socket.on("data", (chunk) => {
+      raw += chunk.toString("latin1");
+      if (raw.includes("\r\n\r\n")) finish();
+    });
+    socket.on("end", finish);
+    socket.on("error", (err) => {
+      if (settled) return;
+      settled = true;
+      reject(err);
+    });
   });
 }
 
@@ -578,6 +625,201 @@ test("proxy rewrites redirects, strips gateway cookie, and falls back by referer
   });
   assert.equal(routeCookieAsset.status, 200, routeCookieAsset.body);
   assert.equal(routeCookieAsset.body, "asset-ok");
+});
+
+test("websocket proxy forwards connection upgrade header", async (t) => {
+  const tmp = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "multiprox-ws-"));
+  const testHome = path.join(tmp, "home");
+  const userHome = path.join(testHome, TEST_USER);
+  const configPath = path.join(userHome, ".config", "multiprox", "config.yaml");
+  const statePath = path.join(tmp, "state.yaml");
+  const gatewayPort = 30444;
+  let backendRequest = "";
+
+  const backend = net.createServer((socket) => {
+    let raw = "";
+    socket.on("data", (chunk) => {
+      raw += chunk.toString("latin1");
+      if (!raw.includes("\r\n\r\n")) return;
+
+      backendRequest = raw.slice(0, raw.indexOf("\r\n\r\n") + 4);
+      const lines = backendRequest.split("\r\n");
+      const headers = {};
+      for (const line of lines.slice(1)) {
+        if (!line) break;
+        const idx = line.indexOf(":");
+        if (idx === -1) continue;
+        headers[line.slice(0, idx).toLowerCase()] = line.slice(idx + 1).trim();
+      }
+
+      const hasConnectionUpgrade = /(?:^|,\s*)upgrade(?:\s*,|$)/i.test(headers.connection || "");
+      const hasUpgradeWebsocket = /^websocket$/i.test(headers.upgrade || "");
+      if (hasConnectionUpgrade && hasUpgradeWebsocket) {
+        socket.write("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n");
+      } else {
+        socket.write("HTTP/1.1 400 Bad Request\r\nContent-Length: 26\r\n\r\nmissing connection upgrade");
+      }
+      socket.end();
+    });
+  });
+  await new Promise((resolve) => backend.listen(0, "127.0.0.1", resolve));
+  t.after(() => backend.close());
+  const backendPort = backend.address().port;
+
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  const { hashPassword } = require(path.join(ROOT, "dist", "auth"));
+  const yaml = require("js-yaml");
+  fs.writeFileSync(
+    configPath,
+    yaml.dump({
+      auth: { password_hash: hashPassword("pass123") },
+      services: [{ id: "app", name: "App", host: "127.0.0.1", port: backendPort, path: "/app", websocket: true }],
+    })
+  );
+  fs.writeFileSync(
+    statePath,
+    yaml.dump({
+      server: { host: "127.0.0.1", port: gatewayPort },
+      auth: { session_secret: "ws-test-secret", session_ttl: 3600 },
+      users: { home_prefix: testHome, scan_homes: true },
+    })
+  );
+
+  const daemon = runForeground(["-s", statePath, "--host", "127.0.0.1", "--port", String(gatewayPort)]);
+  t.after(() => daemon.kill("SIGTERM"));
+  await waitForLog(daemon, /listening on http:\/\/127\.0\.0\.1:/);
+
+  const loginBody = `username=${TEST_USER}&password=pass123`;
+  const login = await httpRequest(
+    {
+      hostname: "127.0.0.1",
+      port: gatewayPort,
+      path: "/login",
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Content-Length": Buffer.byteLength(loginBody),
+      },
+    },
+    loginBody
+  );
+  assert.equal(login.status, 302, login.body);
+  const cookie = parseCookie(login.headers["set-cookie"]);
+
+  const response = await websocketHandshake({
+    port: gatewayPort,
+    path: `/proxy/${TEST_USER}/app/ws?token=1`,
+    cookie,
+    origin: `http://127.0.0.1:${gatewayPort}`,
+  });
+
+  assert.equal(response.status, 101, response.raw);
+  assert.match(backendRequest, /^GET \/ws\?token=1 HTTP\/1\.1\r\n/);
+  assert.match(backendRequest, new RegExp(`^host: 127\\.0\\.0\\.1:${backendPort}$`, "mi"));
+  assert.match(backendRequest, /^connection: Upgrade$/mi);
+  assert.match(backendRequest, /^upgrade: websocket$/mi);
+});
+
+test("websocket proxy falls back to route cookie for absolute paths", async (t) => {
+  const tmp = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "multiprox-ws-route-"));
+  const testHome = path.join(tmp, "home");
+  const userHome = path.join(testHome, TEST_USER);
+  const configPath = path.join(userHome, ".config", "multiprox", "config.yaml");
+  const statePath = path.join(tmp, "state.yaml");
+  const gatewayPort = 30445;
+  let upgradeRequest = "";
+
+  const backend = net.createServer((socket) => {
+    let raw = "";
+    socket.on("data", (chunk) => {
+      raw += chunk.toString("latin1");
+      if (!raw.includes("\r\n\r\n")) return;
+
+      const request = raw.slice(0, raw.indexOf("\r\n\r\n") + 4);
+      const lines = request.split("\r\n");
+      const headers = {};
+      for (const line of lines.slice(1)) {
+        if (!line) break;
+        const idx = line.indexOf(":");
+        if (idx === -1) continue;
+        headers[line.slice(0, idx).toLowerCase()] = line.slice(idx + 1).trim();
+      }
+
+      if (/^websocket$/i.test(headers.upgrade || "")) {
+        upgradeRequest = request;
+        socket.write("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n");
+      } else {
+        socket.write("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 2\r\n\r\nok");
+      }
+      socket.end();
+    });
+  });
+  await new Promise((resolve) => backend.listen(0, "127.0.0.1", resolve));
+  t.after(() => backend.close());
+  const backendPort = backend.address().port;
+
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  const { hashPassword } = require(path.join(ROOT, "dist", "auth"));
+  const yaml = require("js-yaml");
+  fs.writeFileSync(
+    configPath,
+    yaml.dump({
+      auth: { password_hash: hashPassword("pass123") },
+      services: [{ id: "app", name: "App", host: "127.0.0.1", port: backendPort, path: "/app", websocket: true }],
+    })
+  );
+  fs.writeFileSync(
+    statePath,
+    yaml.dump({
+      server: { host: "127.0.0.1", port: gatewayPort },
+      auth: { session_secret: "ws-route-test-secret", session_ttl: 3600 },
+      users: { home_prefix: testHome, scan_homes: true },
+    })
+  );
+
+  const daemon = runForeground(["-s", statePath, "--host", "127.0.0.1", "--port", String(gatewayPort)]);
+  t.after(() => daemon.kill("SIGTERM"));
+  await waitForLog(daemon, /listening on http:\/\/127\.0\.0\.1:/);
+
+  const loginBody = `username=${TEST_USER}&password=pass123`;
+  const login = await httpRequest(
+    {
+      hostname: "127.0.0.1",
+      port: gatewayPort,
+      path: "/login",
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Content-Length": Buffer.byteLength(loginBody),
+      },
+    },
+    loginBody
+  );
+  assert.equal(login.status, 302, login.body);
+  const sessionCookie = parseCookie(login.headers["set-cookie"]);
+
+  const routed = await httpRequest({
+    hostname: "127.0.0.1",
+    port: gatewayPort,
+    path: `/proxy/${TEST_USER}/app/`,
+    method: "GET",
+    headers: { Cookie: sessionCookie },
+  });
+  assert.equal(routed.status, 200, routed.body);
+  const routeCookie = findCookie(routed.headers["set-cookie"], "multiprox_route");
+  assert.match(routeCookie, /^multiprox_route=/);
+
+  const response = await websocketHandshake({
+    port: gatewayPort,
+    path: "/socket?token=route",
+    cookie: `${sessionCookie}; ${routeCookie}`,
+    origin: `http://127.0.0.1:${gatewayPort}`,
+  });
+
+  assert.equal(response.status, 101, response.raw);
+  assert.match(upgradeRequest, /^GET \/socket\?token=route HTTP\/1\.1\r\n/);
+  assert.match(upgradeRequest, /^connection: Upgrade$/mi);
+  assert.match(upgradeRequest, /^upgrade: websocket$/mi);
 });
 
 test("legacy proxy path routing", () => {
